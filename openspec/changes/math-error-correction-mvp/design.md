@@ -35,23 +35,24 @@
 
 ## Decisions
 
-### D1: 应用架构——Node.js + Next.js App Router 模块化单体
+### D1: 应用架构——Node.js + Next.js App Router 模块化单体（PDF Processing 除外）
 
-**决策**：采用 Node.js + Next.js（App Router）全栈单体，单一部署单元。内部维持清晰模块边界，至少区分：
+**决策**：采用 Node.js + Next.js（App Router）作为核心业务应用，承载 UI、Auth、业务工作流、Storage/Database 协调。内部维持清晰模块边界，至少区分：
 
 - **UI / Web**：Next.js App Router 路由、Server Components、Client Components、Route Handlers、Server Actions
 - **Domain / Business Logic**：核心业务规则和工作流
-- **PDF Processing**：PDF 页面渲染为图片、题目区域裁切、订正卷 PDF 组装；PDF 处理逻辑不散落于 Web / API 层，仅通过明确接口被 Domain / Business Logic 层调用
 - **Auth**：身份验证，Provider SDK 调用收拢于此
 - **Storage**：文件资产读写，Provider SDK 调用收拢于此
 - **AI Integration**：AI Task Contract 实现，模型调用收拢于此
 - **Persistence**：数据读写，数据库 SDK 调用收拢于此
 
-**理由**：MVP 规模不需要微服务复杂度；模块边界的目标是避免核心业务代码直接耦合具体基础设施 Provider，而不是现在就拆成独立服务。Node.js 生态（`pdfjs-dist`、`sharp`、`pdf-lib` 等）可满足当前 Spec 要求的 PDF 操作；AI 集成基于外部 API，Node.js SDK 已足够。
+**PDF Processing 修订**：PDF 页面渲染、题目区域裁切、订正卷 PDF 组装**不**在 Next.js 进程内实现，而是作为独立的 Python 服务（见 D11），通过 Provider-neutral 的 `PdfProcessingPort` 接口被 Domain / Business Logic 层调用。这是唯一从"单一进程"中拆出的模块；Auth、Storage、AI Integration、Persistence 仍在 Next.js 进程内，各自的 Provider SDK 调用收拢在对应 Service 边界内。
 
-**演化路径**（非 MVP 目标）：若 PDF Processing 或 AI Integration 因性能瓶颈、异步任务需求或 Python 生态优势需要独立部署，可沿现有模块边界将其提取为独立服务；这是可演化路径，当前不实施。
+**理由**：MVP 规模不需要微服务复杂度，Auth/Storage/AI/Persistence 维持进程内模块边界即可满足 Provider 可替换性要求。PDF Processing 是例外——服务端 PDF 页面渲染在 Node.js 生态（`pdfjs-dist` 依赖原生 `canvas` 绑定，社区已知存在多个渲染/构建相关问题）成熟度不如 Python 生态（`PyMuPDF`），且 D8 确定的自托管 Docker 部署方式使得与 Python 服务同机 docker-compose 共部署的成本很低，不需要为了"避免跨进程复杂度"而勉强留在 Node.js 内实现。具体边界和调用协议见 D11。
 
-**替代方案**：独立 API 服务 + SPA 前端。更灵活，但 MVP 阶段增加了跨进程部署和认证 session 共享的配置复杂度。
+**部署单元说明**：Application Runtime（D8）现在由 Next.js 容器和 D11 定义的 Python PDF Processing 容器共同组成，两者通过 docker-compose 在同一台机器上共部署，仍是一个逻辑上的 MVP 部署拓扑，不是完整的独立微服务架构。
+
+**替代方案**：独立 API 服务 + SPA 前端。更灵活，但 MVP 阶段增加了跨进程部署和认证 session 共享的配置复杂度，本项目未采用。
 
 ---
 
@@ -202,6 +203,172 @@ MVP 实现时可用同一个多模态模型完成全部任务，但这是实现�
 
 **答题空间**：当系统能够确定题目类型时，答题空间与题型匹配；无法确定时使用默认空间，不阻塞生成。
 
+### D8: Application Runtime 部署——MVP 早中期家庭 mini PC，Database 采用自建 PostgreSQL + 独立 OSS 备份
+
+**决策**：Next.js Application Runtime 在 MVP 早中期部署于家庭 mini PC，使用 Docker 运行；通过安全的公网入口机制提供 HTTPS 访问（具体机制待单独选型，此处不默认 Cloudflare Tunnel 或任何特定方案）。实现不得依赖家庭环境的特有条件（如固定本地路径、假设持久本地磁盘存放关键数据、假设固定公网 IP）——Docker workload 须保持可在未来直接迁移到香港或其他云 region 运行，无需重写。Application Runtime 的容器构成包括 Next.js 主应用容器和 D11 定义的 Python PDF Processing Service 容器，两者共同构成同一个可丢弃/可迁移的部署单元。
+
+Database 采用**自建 PostgreSQL（mini PC 本地）+ 独立 OSS 数据库备份**，不使用 Managed PostgreSQL 作为当前 MVP 方案；阿里云 RDS PostgreSQL 保留为未来用户量增长、需要 HA/PITR 时的 migration target，不是当前默认。理由：当前阶段仅个人使用、早期用户很少，不为尚不存在的 HA/PITR 需求提前承担固定成本；自建方案零边际成本，且复用 D10 已选定的 Storage Provider（不新增 Provider 决策面）。
+
+**三层区分（不要混同，这是本次决策的关键澄清）**：
+
+1. **Logical lifecycle isolation（已实现）**：PostgreSQL 运行在独立 Docker container + 独立 persistent volume 中；Next.js / Python PDF Processing Service 的 deploy、rebuild、restart、container 替换，不得删除或重建这个 volume。
+2. **Failure-domain limitation（MVP 阶段明确接受的 trade-off，不是已解决的问题）**：PostgreSQL 与 Application Runtime 当前仍部署在同一台 mini PC 上，共享主机、SSD、电源等物理故障域——**没有实现运行时层面的物理故障域隔离**。mini PC 或其 SSD 整机故障时，本地 volume 本身无法幸免。
+3. **Disaster recovery isolation（通过独立备份路径实现，而非物理隔离）**：定时 `pg_dump` 将数据库备份上传到独立的 OSS backup path（复用 D10 已选定的阿里云 OSS），使 mini PC / SSD 完全故障后仍可在新 PostgreSQL 实例上恢复。备份提供的是 **recovery path**，不是高可用（HA），也不是物理隔离；两次备份之间产生的数据变更存在丢失风险（见下方 RPO）。
+
+**MVP RPO/RTO 要求**：
+- **RPO ≤ 6 小时**：当前数据量小，采用较高频率的 `pg_dump`（非每日一次），具体调度周期留至实现任务确定；不引入 WAL archiving/PITR（超出当前阶段需求）。
+- **Backup retention policy**：须定义备份保留策略（保留多少个历史备份/多长时间），避免备份无限堆积，也避免因保留窗口过短导致无可用恢复点；具体保留窗口留至实现任务确定。
+- **Backup 可观测性**：备份上传的成功/失败必须可观测（日志、告警或至少可人工核查的记录），不能是静默运行、出问题也不知道的定时任务。
+- **Backup 不得只存在于 mini PC**：本地保留 dump 文件仅作为过渡，最终必须落地到独立的 OSS backup path，满足 D3 的独立备份路径要求。
+- **Restore test 必须实际执行**：不能只验证"dump 文件存在"，必须真正执行一次恢复流程——在一个干净的 PostgreSQL 实例中从最近备份恢复，并校验关键业务数据（如错题、题目区域坐标等）确实可读、内容正确。这是自建备份方案最容易被忽视的失败模式，必须作为明确任务验证，而不是假设"备份存在=可以恢复"。
+- **Schema 可移植性**：数据库 migration/schema 保持标准 PostgreSQL 可移植性（不使用当前自建环境特有的扩展或非标准配置），为未来迁移到 Managed PostgreSQL（如阿里云 RDS）做准备，迁移时只需要 `pg_dump`/`pg_restore` 即可，不需要重写 Schema。
+
+**架构原则（长期有效）**：
+- Application Runtime 是可丢弃、可重建、可迁移的单元。
+- Database 中的权威业务事实（人工确认的错题、题目区域坐标、知识点权威值、Generation Snapshot 等持久业务状态）与 Object Storage 中的不可恢复原始资产（D3：原始 PDF、批改照片），两者的生命周期都必须与 Application Runtime 解耦——它们是不同的资产类型，不应混同，但对"须独立于 Application Runtime 生命周期"这一要求是一致的。
+- mini PC 故障、重装、迁移不得导致上述持久业务状态或原始资产丢失。
+- 香港或其他云 region 保留为 Application Runtime **未来**的迁移目标，不是当前 MVP 的默认部署位置。
+
+**Smoke Test Gate（两层，均为待完成的验证项，不视为已验证事实）**：
+1. **当前阶段**：验证"大陆浏览器 → 所选公网入口机制 → 家庭 mini PC"这条入站链路的真实稳定性（家庭宽带上行带宽、断线重连、所选入口机制在大陆网络环境下的实际表现）。
+2. **当前阶段（出站，备份路径）**：验证"mini PC → OSS 备份上传"的真实稳定性（家庭宽带上行带宽是否足以支撑定时 `pg_dump` 备份上传、失败重试机制是否可靠）。
+3. **未来阶段**（迁移云 region 时）：重新验证"大陆浏览器 → 云端 Next.js"的延迟和稳定性，作为迁移决策的前置条件。
+
+**AI Provider Region 验证要求（保留，验证目标随部署阶段变化）**：AI Provider 选型必须核实其官方是否支持从**当前实际出站来源**调用——MVP 早中期这个来源是家庭宽带的大陆出口 IP，而非香港/云端 IP（公网入口 Tunnel 只代理入站访问，不改变 Next.js 主动发起的出站连接的源地址）；未来迁移后需针对新的出站来源重新核实。
+
+---
+
+### D9: 文件上传机制与存储安全模型
+
+**决策**：批改照片、原始 PDF 采用 **Browser Direct Upload**：浏览器直接向 Object Storage 上传文件数据，通过 Next.js / StorageService 基于当前 User 与业务上下文动态签发短期、限定范围的上传凭证（presigned URL 或临时凭证），不经 Next.js 服务器中转文件内容。
+
+**理由**：本项目上传的原始 PDF（扫描件，常达数十 MB）和批改照片（多张累计可达数十至上百 MB）容易触发常见 serverless 运行时的请求体大小上限；服务端中转还会造成双倍带宽成本。浏览器直传规避了这一具体限制，且主流对象存储 SDK 已原生支持分片上传和断点续传。
+
+**安全边界**（Next.js / StorageService = Authorization / Control Plane，Object Storage = File Data Plane；浏览器绕过的只是大文件的数据中转，不是后端权限控制）：
+- Object Storage bucket 保持 private，不得 public-write；原始 PDF、批改照片等私有资产也不得默认 public-read。
+- 浏览器不得持有长期 Storage Credential（AccessKey/SecretKey）。上传权限遵循最小权限原则：短有效期、只允许指定操作（如 PUT/multipart upload）、只允许指定 object key/upload scope；不得包含 bucket list、任意对象读取、删除，或覆盖其他资产的权限。
+- 下载/查看私有资产须先经过服务端 Auth + Ownership/Authorization Check，再由 StorageService 签发短期 signed GET URL；不能仅凭知道对象存储地址直接访问资产。
+
+**上传生命周期**（至少语义上区分，具体状态字段/Schema 留至实现阶段）：申请上传 → 服务端授权 → Browser 直传 → 服务端验证 → Asset 可用。Browser 报告"上传成功"不能直接成为权威业务事实；服务端必须确认对象实际存在，并按需验证 size、content type、checksum/metadata，再将 Asset 标记为可用。
+
+**原始资产不可覆盖语义**（呼应 D3 的防自动覆盖要求）：
+- object key 由服务端生成稳定且不可预测的唯一标识（如 UUID），不由 Browser 自由指定最终存储路径。
+- 原始资产默认不得通过重新上传覆盖已有对象；需要重新上传时应创建新的 Asset/object，而非覆盖原始对象。
+- AI 重算、PDF Processing、派生资产重新生成等自动化流程不得拥有覆盖或删除原始资产的能力。
+
+**与 Backup/Recovery 的关系**：Direct Upload 只解决上传通道问题，不等同于已完成 D3 要求的备份设计。原始资产上传后仍须满足 D3 全部要求（private access、防自动覆盖/误删、独立于应用部署的持久化、独立 backup/recovery path）；Storage Provider 提供 versioning/跨区域复制/快照等能力不等于系统已完成备份设计，须在基础设施实现阶段实际配置并验证恢复路径。
+
+**留至实现阶段**：multipart upload、断点续传、presigned URL/STS 临时凭证具体方案与有效期、单文件大小限制、checksum 算法、失败重试策略，根据最终选定的 Storage Provider 决定。
+
+**Storage Provider 硬性筛选条件**（用于后续 Storage Provider 选型，此处不锁定具体 Provider）：大陆浏览器可稳定直传、支持安全的临时上传授权机制、支持 private object access，并具备实现 backup/recovery 和防误删策略所需的基础能力。
+
+---
+
+### D10: Storage Provider——阿里云 OSS（MVP Implementation Choice）
+
+**决策**：Storage Provider 选定**阿里云 OSS**。这是 StorageService 边界内的 **MVP 实现选择**，不改变 D3/D9 定义的 Provider-neutral Domain / StorageService 边界——阿里云 OSS 的 SDK、Bucket、Object Key 等 Provider-specific 类型只存在于 StorageService 实现内部，不得泄漏进入 Domain Model（Domain 层继续只引用 D3 定义的 Asset 抽象）。
+
+**选型依据**：在"大陆浏览器可稳定直传、STS/presigned URL 最小权限、versioning、独立 backup/recovery path"等约束下，阿里云 OSS 与腾讯云 COS 在大多数维度功能对等；决定性差异是**跨账号 replication**——阿里云官方文档明确支持["跨账号跨区域复制"](https://help.aliyun.com/zh/oss/user-guide/cross-account-cross-region-replication)，可实现目标账号独立于主 Storage 账号的隔离备份；腾讯云 COS 的 `PutBucketReplication` 已确认是持续自动生效的原生 replication 规则，但其官方文档未明确支持跨独立顶级账号的目标桶（Role 参数格式更像同账号下的主子账号关系），需要额外自建定时任务才能达到同等隔离效果。WORM/Object Lock **不作为本次选型的硬性筛选条件**（腾讯云 COS 的 Object Lock 仅白名单开放，但这不构成否决腾讯云的理由）。
+
+**MVP 落地约束**：
+- **Region**：优先选择中国大陆 region；最终 region 根据实际用户地理位置和 D8 定义的 smoke test 结果确认，不预先锁定具体大陆城市 region。
+- **Bucket**：private，不做 public-read/public-write。
+- **上传凭证**：延续 D9 的最小权限模型——小文件可用 presigned URL；大文件/multipart upload 优先使用 STS 临时凭证（可精确限定 action 列表与 object key/prefix，不含 list/delete）；浏览器不持有长期 AccessKey/SecretKey。
+- **原始资产不可覆盖**：服务端生成唯一 object key，不允许覆盖已有对象（延续 D9）。
+- **上传验证**：浏览器上传完成后，服务端必须验证对象实际存在及 size/content-type/checksum 等 metadata，才将 Asset 标记为可用（延续 D9 的上传生命周期）。
+- **误删/覆盖防线**：开启 Bucket Versioning 作为第一道防线。
+- **独立 backup/recovery path**：优先使用 OSS 官方支持的跨账号 + 跨区域复制实现，满足 D3 的独立备份路径要求。
+- **WORM**：不作为 MVP 必须项，留作后续可选的 defense-in-depth 加固手段。
+
+---
+
+### D11: PDF Processing Service——独立 Python 服务，Provider-neutral 调用边界
+
+**决策**：PDF 页面渲染、题目区域裁切、图像处理、订正卷 PDF 组装，由独立的 **Python PDF Processing Service** 实现，作为单独的 Docker container，与 Next.js 在 D8 定义的家庭 mini PC 上通过 docker-compose 共部署。
+
+**调用边界（Provider-neutral）**：
+
+```
+Application Workflow → PdfProcessingPort → Infrastructure HTTP Adapter → Python PDF Processing Service
+```
+
+- Domain / Application Logic 只依赖 `PdfProcessingPort`（或等价的 Service interface），不直接依赖 HTTP、Python service 的具体 endpoint，或 PyMuPDF 等实现细节。
+- HTTP 协议、请求/响应结构、PyMuPDF 类型等实现细节只存在于 Infrastructure 层的 Adapter 实现内，不得泄漏进入 Domain Model 或 Application Workflow。
+
+**Python Service 职责边界（严格限定为计算型处理）**：
+
+Python Service **只负责**：
+- PDF 页面渲染为图片
+- 题目区域（bbox）裁切
+- 图像处理
+- 订正卷 PDF 生成
+
+Python Service **不负责**（这些能力继续留在 Next.js，Next.js 是业务状态和授权的唯一 authority）：
+- Auth / 用户权限判断
+- Database 业务状态
+- AI Provider orchestration
+- Storage 授权（access control 决策）
+- 最终业务 workflow 状态迁移
+
+**技术选型**：第一版优先使用 **PyMuPDF** 完成渲染、裁切、PDF 组装；仅当出现 PyMuPDF 无法满足的具体图像处理需求时，才引入 Pillow/OpenCV，不预先为"生态完整性"引入未使用的依赖。
+
+**Storage 访问的最小权限约束**：原始 PDF 位于 private OSS Bucket（D10）。Python Service **不得持有长期 OSS AccessKey/SecretKey**。输入（原始 PDF 读取）和输出（裁切图片、订正卷 PDF 写入 OSS）须通过以下方式之一实现最小权限：
+- 由 Next.js / StorageService 签发短期、限定 object key 范围的临时读取/写入凭证，供 Python Service 直接对接 OSS；或
+- Python Service 不直接访问 OSS，由 Next.js 负责下载输入文件并传给 Python Service、接收处理结果后再上传回 OSS。
+
+具体传输方式（凭证注入 vs Next.js 中转）留至实现阶段，但必须满足最小权限原则，不因为"内部服务"而放宽。
+
+**内部 HTTP API 设计约束**（具体协议/字段留至实现阶段，以下是必须覆盖的问题）：
+- **request/job identity**：每次调用须有可追踪的请求/任务标识，便于日志关联和重试判断
+- **timeout**：Next.js 侧对调用设置合理超时，避免无限等待
+- **retry / idempotency**：失败重试不得产生重复的部分输出或不一致状态；接口设计需支持幂等调用
+- **临时文件清理**：Python Service 处理过程中产生的临时文件，处理完成或失败后必须清理，不得无限堆积
+- **输入文件大小限制**：明确拒绝超出处理能力的输入，而非无限尝试
+- **malformed/corrupt PDF**：明确的错误响应，不导致进程崩溃或状态不明
+- **service unavailable**：Next.js 侧须能识别 Python Service 不可用，并将其作为明确的失败状态呈现给业务流程，而不是静默挂起
+- **临时文件不得被当作持久资产**：Python Service 产生的中间文件只是处理过程的临时产物，唯一的持久化路径是通过 Next.js/StorageService 写回 OSS 成为 Asset（呼应 D3/D9）
+- **失败传播**：Python Service 调用失败不得被业务 workflow 静默吞掉或直接推进到"成功"状态；必须显式传播失败，交由 D6 定义的持久化工作流处理（保留已确认事实，允许人工重试）
+
+**同步 vs 异步**：MVP 采用**同步 HTTP 请求/响应**。当前 Specs 的 PDF 规模（单份试卷、少量错题、家庭单账号使用）和批改流程本身已含人工确认步骤（用户预期有等待），不构成需要引入消息队列/异步任务系统的规模压力。**不预先引入 MQ/Redis/Celery 等基础设施**；若未来量级增长导致同步调用不可行，可作为独立的演化路径处理，当前不实施。
+
+**与 D8 的关系**：Python Service 容器与 D8 定义的 Application Runtime 生命周期原则一致——它同样是可丢弃、可重建的计算单元，不持有需要独立于 Runtime 存活的持久业务状态或原始资产；所有需要持久化的输出（裁切图片、订正卷）最终落地到 D3/D10 定义的 Object Storage，而非停留在 Python Service 自身。
+
+---
+
+### D12: Auth Provider 实现选择——短信 OTP 已确定，Email OTP 走 Selection Gate
+
+**短信 OTP**：确定采用**阿里云号码认证服务(PNVS)—短信认证**，作为 MVP Implementation Choice。依据：标准 SMS 签名服务明确要求企业资质，个人实名认证账号无法报备（阿里云、腾讯云官方文档均已确认）；PNVS 短信认证是阿里云专为个人实名认证开发者提供的免资质验证码产品，不需要申请签名/模板，满足当前账号主体（大陆个人实名认证）的约束。
+
+**Email OTP**：不在 design 阶段锁定 Provider，走 **Selection Gate**（实现阶段执行的经验性选型，而非设计阶段假设的结论）：
+1. 优先实测**阿里云邮件推送(DirectMail)**和**腾讯云 SES**：当前个人实名认证账号能否正常开通、能否完成 sender/domain verification、向 qq.com/163.com/126.com 及至少一个国际邮箱发送 OTP 的送达时间与是否进入垃圾箱、基本稳定性。
+2. 实测通过的国内 Provider 中选择一个作为 MVP 实现。
+3. 若国内 Provider 均因账号资质或其他原因不可用，再评估海外 ESP（如 SendGrid/Resend/AWS SES）作为 fallback。
+
+**Provider Boundary（两者共同遵守）**：Email OTP 与 SMS OTP 是两个独立的 Provider 边界，不因为都属于"Auth"而绑定同一厂商，也不与 Storage Provider（D10）绑定。Domain / AuthService 不依赖任何具体 Email/SMS Provider 的类型；Provider-specific SDK/config 只存在于 AuthService 的 adapter/infrastructure 实现内。
+
+---
+
+### D13: AI Provider Selection Gate——基于固定评测样本的可重复经验性选型
+
+**背景**：D5 定义了四个 AI Task Contract（错题识别、区域定位、知识点标签、题型分类），但不预设具体模型。选型不能仅凭通用 benchmark 或厂商自评数字（不代表本项目的具体场景：中文小学数学试卷、几何图形、教师手写批改标记），必须通过一次可重复的经验性评测（Selection Gate）在实现阶段确定 MVP 默认模型。
+
+**当前候选（第一轮，非最终锁定，Gate 执行时重新核实可用性）**：通义千问 Qwen-VL 系列、Moonshot Kimi 当前可用多模态模型。若第一轮均不能满足要求，再评估智谱 GLM、DeepSeek 或其他候选，不预先扩大范围。
+
+**AI Provider Region 验证**：沿用 D8 定义的原则——任何候选模型是否可从当前 Application Runtime 实际出站来源（当前是家庭宽带大陆出口 IP）调用，须在 Gate 执行时用官方文档重新核实。海外主流 Provider（OpenAI/Anthropic/Gemini）当前对中国大陆的访问限制状态是会随时间变化的外部事实，不在 design 中固化为架构假设——design 只保留"验证要求"本身。
+
+**Evaluation 方法（Gate 必须满足以下结构，避免主观印象判断）**：
+1. **固定的 representative evaluation samples**（至少覆盖）：
+   - 中文小学数学试卷
+   - 印刷文字与数学公式
+   - 几何图形
+   - 圈、叉、勾、手写批改等不同教师标记
+   - 单题、多题、跨页等典型情况
+2. **按 D5 的四个 Task Contract 分别评估**，不要求单一模型赢下全部任务：错题识别、区域定位/bbox、知识点标签、题型分类。
+3. **至少记录的指标**：task correctness、bbox/定位质量、结构化 JSON contract 成功率、latency、API 成本、failure/retry 行为。
+4. **输入与期望结果固定且可重复运行**——同一组样本和期望结果可以重新跑一遍来验证任何模型切换，不依赖每次人工凭印象判断。
+5. **Provider Boundary**：Provider-specific SDK、model name、request/response mapping 只能存在于 AI Integration / Adapter 层；Domain 和 workflow 只依赖 D5 定义的 Task Contract 接口。
+6. **输出**：Selection Gate 完成后必须产出一份简短 decision record——测试了哪些模型、基于什么样本和指标、为什么选择当前 MVP 默认模型（或按任务分开选择的模型组合）、已知限制。
+
 ## Risks / Trade-offs
 
 - **AI 识别准确率**：批改风格不统一影响错题识别结果。→ 人工确认是强制节点，不依赖 AI 输出正确。
@@ -214,19 +381,19 @@ MVP 实现时可用同一个多模态模型完成全部任务，但这是实现�
 
 全新应用，无存量数据迁移。初次部署须满足：
 
-1. 对象存储 Provider 配置完成，具备独立于代码部署的访问权限
-2. 原始资产备份路径已配置，并与应用部署流程验证相互隔离
-3. Auth Provider 配置完成，预配置邮箱 / 手机号已录入
-4. 数据库初始化，初始 User 和 Child 记录已创建
-5. AI API 连通性已验证
+1. 对象存储（阿里云 OSS）配置完成，具备独立于代码部署的访问权限
+2. 原始资产备份路径（OSS 跨账号复制）已配置，并与应用部署流程验证相互隔离
+3. Auth 配置完成：短信 OTP（阿里云 PNVS）已确定；Email OTP Selection Gate（D12）已执行并选定实现；预配置邮箱/手机号已录入 allowlist（User/Child 记录由首次 OTP 登录自动创建，不作为手工部署前置项）
+4. 自建 PostgreSQL 容器 + 独立 persistent volume 已部署；定时 `pg_dump` → OSS 备份任务已配置并验证上传成功；至少完成一次 restore test
+5. AI API 连通性已验证（D13 Selection Gate 执行完成）
+6. Python PDF Processing Service 容器已随 Next.js 共部署并验证可用（D11）
 
 ## Open Questions
 
-- Auth Provider 选型（邮件 / 短信服务商）：实现阶段决定
-- 对象存储 Provider 选型：实现阶段决定
-- Database Provider 选型：实现阶段决定，PostgreSQL 优先
-- AI 模型选型：实现阶段决定
-- PDF 页面渲染库：实现阶段决定
-- UI 组件库：实现阶段决定
+- **Email OTP Provider 选型**：见 D12 Selection Gate。
+- **AI 模型选型**：见 D13 Selection Gate。
+- **UI 组件库**：shadcn/ui + Tailwind（已确认，implementation choice，不改变架构约束）。
+- **公网入口 / Tunnel 机制及 ICP 备案合规问题**：D8 定义的 unresolved implementation gate，选定具体家庭宽带公网入口方案时须单独核实（大陆出站 Web 服务合法性、域名/ICP 备案要求、所选 tunnel/reverse proxy 的条款与大陆访问稳定性、HTTPS/源站暴露问题）。
+- **pg_dump 具体调度周期与备份保留窗口**：D8 已定义 RPO ≤ 6h 约束，具体 cron 周期和保留天数留至实现任务确定。
 - Generation Snapshot 的具体 schema：实现阶段决定
 - 题库浏览与管理界面是否纳入 MVP：待后续 change 决定
