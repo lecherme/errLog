@@ -1,0 +1,16 @@
+{
+  "protectedBranches": ["main", "master", "trunk"],
+  "denyPatterns": [
+    ".git/**",
+    "**/.env",
+    "**/.env.*",
+    "**/*.pem",
+    "**/*.key",
+    "**/credentials.*",
+    "**/secrets/**",
+    "node_modules/**"
+  ],
+  "allowPush": false,
+  "requireCleanIndex": true,
+  "planTtlMinutes": 15
+}
