@@ -10,7 +10,7 @@
     "**/secrets/**",
     "node_modules/**"
   ],
-  "allowPush": false,
+  "allowPush": true,
   "requireCleanIndex": true,
   "planTtlMinutes": 15
 }

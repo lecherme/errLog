@@ -439,8 +439,8 @@ test('Git without hook run support fails early with a stable code', async () => 
   assert.equal(result.json.errors[0].code, 'UNSUPPORTED_GIT');
 });
 
-test('schema and default policy are valid JSON', async () => {
+test('schema and repository policy are valid JSON', async () => {
   const root = path.resolve(import.meta.dirname, '..');
   assert.equal(JSON.parse(await readFile(path.join(root, 'docs', 'safe-commit-request.schema.json'), 'utf8')).properties.schemaVersion.const, 1);
-  assert.equal(JSON.parse(await readFile(path.join(root, '.safe-commit.json'), 'utf8')).allowPush, false);
+  assert.equal(JSON.parse(await readFile(path.join(root, '.safe-commit.json'), 'utf8')).allowPush, true);
 });
