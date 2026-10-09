@@ -3,6 +3,31 @@
 Tracks openspec-refine issues and working decisions for the `math-error-correction-mvp` change.
 This is a working document, not a spec artifact.
 
+## Current Implementation Handoff
+
+- This section is the authoritative current handoff; later historical refinement notes
+  may contain superseded point-in-time wording.
+- Handoff verified: 2026-10-09 (Asia/Shanghai).
+- Planning artifacts are complete and committed in `aff5550317f99a9acf82fc6c480d617fa18198e5`.
+- Implementation workflow is committed in `431413ee4484814002db0fe4022d1c87fe1a256e`.
+- Implementation progress: 0/88 tasks.
+- Application skeleton: not started.
+- Active Stage Contract: none.
+- Active Implementation Checkpoint: none — valid pre-implementation baseline.
+- Repository-local remote CI configuration observed at handoff: none; every new session
+  must re-check actual remote CI/check status rather than trust this snapshot.
+- Git state observed before opening this continuity-document edit: clean and
+  synchronized with `origin/experiment/install-opsx-refine`; every new session must
+  re-inspect branch/HEAD/upstream/worktree.
+- Next action: a new session performs read-only recovery, runs `/opsx:apply
+  math-error-correction-mvp` only to inspect progress, then proposes the first small
+  Stage Contract beginning from task 1.1; no implementation starts before user approval.
+- Historical snapshots further below in this file (e.g. "Not yet written into any
+  artifact", "These are not yet reflected in any artifact", "No implementation code
+  exists; this is planning-artifact refinement only") are point-in-time
+  refinement-process records, not current status — current status is this handoff block
+  plus the actual proposal/spec/design/tasks content.
+
 Last updated: 2026-09-18. Checkpoint:
 - P1(1): Consistent — landed, `openspec validate --strict` passed.
 - P1(2): Consistent — landed, `openspec validate --strict` passed.
@@ -20,7 +45,10 @@ Last updated: 2026-09-18. Checkpoint:
 - P2(3): **Consistent** — landed 2026-09-20, no D6/spec changes needed (D6 already complete; specs correctly leave interruption-condition testing to tasks); added a single consolidated `tasks.md` 13.6 covering the four user/session interruption types (refresh/browser close-reopen/same-browser relogin/no-shared-storage cross-browser-or-device login) against a representative set of confirmed facts + the `aiSuggestionSnapshot` displayed-but-unconfirmed case + Generation Snapshot re-fetch, explicitly reusing 5.8 for `currentChildId` and explicitly out of scope for D6's AI-recompute/derived-asset-regeneration operation types (see P2(3) entry below).
 - **All P1 and P2 issues from this refine round are now closed**: P1(1)–P1(11) Consistent, P2(1)–P2(4) Consistent. `math-error-correction-mvp`'s planning artifacts (proposal/specs/design/tasks) are complete per `openspec status`.
 - **Final semantic review (2026-09-20)**: a full read-only re-verification of proposal/design/tasks/specs found one drift — `proposal.md` (What Changes 批改流程 bullet, 设计原则 sentence, New Capabilities 的 grading-workflow 条目) still described the retired pre-D20 "错题识别产出题号列表→逐题区域定位" flow and never mentioned the no-PDF degraded path; every other artifact had already been updated during P1(10)/P1(11) but `proposal.md` was never in either round's edit list. All three spots rewritten to describe the current D20 mechanism (整页自动切题+点选权威框集合+非阻塞预高亮+按失败原因区分的局部修复), without reintroducing the old flow or any free-hand full-boundary redraw language, and without over-promising that every failure resolves (单题修复仍失败时按"未解决"处理，不阻塞其他题). Also fixed `tasks.md` 13.6's imprecise citation — the confirmed-knowledge-tag fact now cites 8.2 (produces/confirms it) with 8.3 kept as its separate non-overwrite/provenance guarantee, not the confirmation step itself. Full-repo residue search (old flow / free-hand redraw / over-broad failure guarantees) came back clean; `openspec validate --strict` and `openspec status` re-run and passing after the fix; proposal→D20→grading-workflow spec→tasks 7.1–7.3/8.1 chain re-read end-to-end and confirmed consistent. `math-error-correction-mvp` is now ready for safe-commit.
-- **Next step**: no open issues remain in this scratchpad. Next action is `safe-commit`, pending explicit user approval per this project's mandatory workflow — not started this session.
+- **Next step**: no open issues remain in this scratchpad. safe-commit was approved,
+  committed (`aff5550317f99a9acf82fc6c480d617fa18198e5`), and pushed — see the Current
+  Implementation Handoff section at the top of this file for the current status; this
+  line is a historical record of that round, not the current next action.
 
 ### Status Legend
 - **Open**: Not yet captured consistently in OpenSpec artifacts

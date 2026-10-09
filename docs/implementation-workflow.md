@@ -171,6 +171,33 @@ When the next stage begins, its checkpoint **replaces** the previous one entirel
 `scratchpad.md` holds exactly one current-stage checkpoint, never an accumulating log of
 past stages. Git history is where past-stage history actually lives.
 
+**Pre-implementation baseline**: a missing Implementation Checkpoint is not automatically
+drift. If all of the following hold — the worktree is clean; the change's planning
+artifacts (proposal/design/tasks/specs) are complete; implementation progress is 0 (no
+OpenSpec implementation task for the change is checked); no application implementation
+code exists yet; no Implementation Checkpoint exists; and the branch/HEAD/upstream state
+can be clearly explained and reported to the user — treat this as the legitimate
+`pre_implementation` baseline, not as a lost checkpoint or drift. The branch/HEAD/
+upstream state is not required to be synchronized to qualify:
+- synchronized with upstream → report normally;
+- ahead of upstream → still a valid `pre_implementation` baseline, but report the
+  unpushed local commit(s) explicitly, and do not push, merge, or otherwise act on them
+  until the user decides;
+- behind, diverged, or unknown → stop and ask the user to confirm before treating
+  anything as a pre-implementation baseline.
+
+Recovery in this case reports: implementation progress as `0/<total task count>`; active
+stage as `none`; the branch/HEAD/upstream state per the rules above; and the next action
+as reading OpenSpec's apply instructions read-only and proposing the first Stage
+Contract — never creating an active checkpoint or editing implementation files before
+that Stage Contract is approved.
+
+Conversely, if the checkpoint is missing but any task is already checked, implementation
+code exists, the worktree has changes not explained by this baseline, or the branch/Git
+state can't be clearly explained, treat it as potential drift per the inconsistency rule
+below — stop and wait for user confirmation rather than assuming a pre-implementation
+baseline.
+
 **New-session recovery protocol** — read-only, in order:
 1. Read `CLAUDE.md`.
 2. Read `docs/implementation-workflow.md`.
@@ -185,7 +212,8 @@ past stages. Git history is where past-stage history actually lives.
    required; this must work from tracked files, the worktree, and Git history alone,
    even on a different machine with no private safe-commit metadata present. If the
    closing commit can't be uniquely determined this way, report the ambiguity and wait
-   for user confirmation instead of guessing.
+   for user confirmation instead of guessing. (See "Pre-implementation baseline" above
+   for the one case where a missing/stale checkpoint is expected, not drift.)
 6. Cross-check any test run the checkpoint claims against credible evidence.
 7. Cross-check `tasks.md` checkboxes.
 8. If this project has a configured remote CI, check the remote CI/check status for the
