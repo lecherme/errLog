@@ -749,6 +749,30 @@ locality_retry:
 
 **范围声明**：本决策关闭 P1(11) 的开放问题，确定有 PDF 主路径统一采用整页分割为正常入口；纯照片路径的既有失败语义（D15）不变，仅其"整页题目分割"契约的局部重试模式定义被本决策进一步明确（对两条路径通用）。Group 4/7 的具体任务编排留给 P1(10)。
 
+---
+
+### D21: 本地验证与远程 CI 使用同一验证链
+
+**决策**：本地 stage-completion gate 与远程 CI 是同一条验证链的两个执行位置，不是两套标准：
+
+- **初始建立与增量扩展**：Group 1 技术骨架建立后（tasks 1.5），在仓库实际使用的 GitHub 远程上建立初始 GitHub Actions CI；后续 Groups 随能力真实落地，在**同一** pipeline 上增量扩展（Python lint/type-check/pytest、contract tests、AI smoke eval、integration/E2E、SAST、container scanning 等），不另建独立 pipeline。
+- **两个执行位置、各自的门禁职责**：safe-commit `check` 之前在本地运行 stage-completion gate，它是勾选 task 与创建 commit 的前置条件；push 之后，远程 CI 对已提交、已推送的 HEAD 独立复验，作为后续 dependent stage、merge 与 release 的门禁——它不是该 commit 自身的前置条件，避免 commit 前的循环依赖。
+- **命令等价**：本地与远程运行相同或等价的命令，且可通过一个文档化的本地入口复现；不允许只存在于 CI 的检查，也不允许弱于 CI 的本地替代。
+- **只验证真实存在的能力**：CI 只覆盖当时已真实存在的代码与配置；不得为 Python 服务、contract tests、AI eval 或 E2E 预先建立占位检查或伪造结果。
+- **数据与凭据**：CI 不使用真实 secret/凭据、儿童数据或家庭照片；基础验证不依赖仓库 secret，所触及的数据均为合成数据。
+- **GitHub Actions 自身的最小供应链约束**：workflow/job 声明最小 `GITHUB_TOKEN` permissions（默认 `contents: read`，仅在确有需要时逐项提升）；第三方 action 锁定到不可变引用，优先完整 commit SHA，不使用浮动 tag 或分支；不使用 `pull_request_target` 等会让不可信 PR 代码在持有 secrets 或写权限 token 的上下文中执行的触发方式。
+- **扫描阻塞策略**：secret scanning 与 dependency vulnerability scanning 的阻塞策略（哪些发现使运行失败、哪些仅报告）依据所选工具的实际能力和首次运行得到的 baseline 明确记录，不凭空编造阈值。
+- **远程失败处理**：已推送 commit 的远程 CI 失败时，沿用 `docs/implementation-workflow.md` 的 repair/recovery 规则——该 stage 进入修复状态，不得开始依赖它的 stage，不得 merge 或 release；修复通过新的 Stage Contract（或明确批准的定向修复）完成，不 amend、不绕过。
+
+**范围**：本决策是开发流程与工具链控制，不改变任何用户可见的产品行为，因此不对应 proposal 或 capability spec 中的 Requirement。签名发布、artifact attestation 与 release pipeline 不在本决策范围内。
+
+**理由**：本地 gate 让每个 stage 在提交前就有可复现的证据；远程 CI 在干净环境中对每次推送持续复验，防止回归和"只在某台机器上通过"。两者使用同一命令集，远程失败可以在本地直接复现和诊断。
+
+**替代方案**：
+- 仅依靠人工本地检查：无法对每次推送持续防回归，且依赖执行者记得运行——拒绝。
+- 允许只在 CI 中存在、本地无法复现的检查：失败难以诊断，造成本地与 CI 环境漂移——拒绝。
+- 每个 Group 建立独立 pipeline：检查集合与约束容易彼此不一致——拒绝。
+
 ## Risks / Trade-offs
 
 - **AI 识别准确率**：批改风格不统一影响错题识别结果。→ 人工确认是强制节点，不依赖 AI 输出正确。

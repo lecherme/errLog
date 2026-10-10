@@ -7,10 +7,13 @@ This is a working document, not a spec artifact.
 
 - This section is the authoritative current handoff; later historical refinement notes
   may contain superseded point-in-time wording.
-- Handoff verified: 2026-10-09 (Asia/Shanghai).
-- Planning artifacts are complete and committed in `aff5550317f99a9acf82fc6c480d617fa18198e5`.
+- Handoff verified: 2026-10-10 (Asia/Shanghai).
+- Planning baseline: completed and committed in `aff5550317f99a9acf82fc6c480d617fa18198e5`;
+  later planning amendments (e.g. refine P1(12): design D21 + task 1.5) are tracked through
+  Git history, not by this SHA.
 - Implementation workflow is committed in `431413ee4484814002db0fe4022d1c87fe1a256e`.
-- Implementation progress: 0/88 tasks.
+- Implementation progress: 0/89 tasks (task 1.5 added 2026-10-10 via refine P1(12): no task
+  owned the CI required by `docs/implementation-workflow.md`; now anchored by design D21).
 - Application skeleton: not started.
 - Active Stage Contract: none.
 - Active Implementation Checkpoint: none — valid pre-implementation baseline.
@@ -28,7 +31,7 @@ This is a working document, not a spec artifact.
   refinement-process records, not current status — current status is this handoff block
   plus the actual proposal/spec/design/tasks content.
 
-Last updated: 2026-09-18. Checkpoint:
+Last updated: 2026-10-10. Checkpoint:
 - P1(1): Consistent — landed, `openspec validate --strict` passed.
 - P1(2): Consistent — landed, `openspec validate --strict` passed.
 - P1(3): Consistent — landed, `openspec validate --strict` passed.
@@ -49,6 +52,8 @@ Last updated: 2026-09-18. Checkpoint:
   committed (`aff5550317f99a9acf82fc6c480d617fa18198e5`), and pushed — see the Current
   Implementation Handoff section at the top of this file for the current status; this
   line is a historical record of that round, not the current next action.
+- P1(12): **Consistent** — landed 2026-10-10; `design.md` gained D21, `tasks.md` gained 1.5;
+  no proposal/spec change; `openspec validate --strict` passed.
 
 ### Status Legend
 - **Open**: Not yet captured consistently in OpenSpec artifacts
@@ -64,6 +69,7 @@ Last updated: 2026-09-18. Checkpoint:
 - **Change → existing system (reuse)**: ran (2026-09-02), trivially satisfied. Greenfield first change; every new capability is correctly `new-dedicated`. Updated 2026-09-17: `child-profile` (added while resolving P1(8)) is likewise `new-dedicated` — no existing main spec or shared capability covers child-context/current-child semantics.
 - **Artifact document-quality**: ran (2026-09-02). Tasks carry explicit `verify …` acceptance criteria throughout. Minor rationale/wording gaps — P2(1), P2(2), P2(3).
 - **Requirements interview** (`/opsx:explore`, 2026-09-09 → 2026-09-16, read-only, no artifact edits): 13 numbered product-tradeoff questions + 2 unnumbered foundational corrections, answered and confirmed by the user (see Confirmed Product Decisions below). This surfaced a materially larger scope than the original photo↔page question (P1(1)) — multi-child model, photo-only degraded flow, answer-region capture, AI error-cause, redo tracking — none of which existed in `proposal`/`specs`/`design`/`tasks` before this interview. Recorded as **P1(1) revised** + **P1(4)–P1(10)** + **P2(4)** below. These are not yet reflected in any artifact.
+- **Workflow/SSDF → Design/Tasks (process traceability)**: ran 2026-10-10. CI required by `docs/implementation-workflow.md` (CI section) and pointed to by `docs/security/ssdf-profile.md` "Group 1 CI"/"Group 1 skeleton" triggers had no owning design decision or task — P1(12).
 
 ### Key References
 - `design.md` D5 (AI Task Contracts), D8 (deployment + backup), D13 (AI Provider Selection Gate)
@@ -362,6 +368,19 @@ Source: `/opsx:explore` read-only interview in this project's conversation histo
 - **Suggested fix**: 待定，处理时先问用户倾向哪个方向，不预设答案。
 - **User decision needed?**: Yes — 处理到这条时会问。
 - **Notes**: 新增于 2026-09-18（处理 P1(4) 时发现）。处理顺序——排在 P1(9) 之后、P1(10) 任务结构收尾之前。
+
+#### P1(12): No design decision or task owns the CI required by the implementation workflow and SSDF profile
+- **Status**: Consistent
+- **Files & locations**:
+  - `tasks.md` — Group 1 (1.1–1.4); no CI task anywhere in the prior 88 tasks
+  - `design.md` — Decisions D1–D20; no CI/verification-chain decision
+- **Evidence**: `docs/implementation-workflow.md` CI section: "Once a Group's technical skeleton and CI are established, these local commands must be the same (or equivalent) commands CI will run"; `docs/security/ssdf-profile.md` PS.1/RV.1 Trigger "Group 1 CI", PO.3 Trigger "Group 1 skeleton". A search of tasks/design/proposal/specs for CI, GitHub/Actions, secret/dependency scanning, lint/type-check/pytest found no owning item. Remote `origin` is `github.com`.
+- **Expected state**: one design decision defines the local-gate/remote-CI verification chain; one Group 1 task establishes the initial CI, traced to it.
+- **Impact**: creating CI inside 1.1 would exceed that task's scope; not creating it leaves the workflow and SSDF CI requirements with no owner.
+- **Recommended artifact**: `design.md` (new D21) + `tasks.md` (new 1.5).
+- **Suggested fix**: add D21 "本地验证与远程 CI 使用同一验证链" before Risks / Trade-offs; add 1.5 after 1.4 citing D21; 1.1–1.4 unchanged.
+- **User decision needed?**: No — direction, scope (incl. migration/seed checks and Actions supply-chain constraints), and three-file edit set approved by the user 2026-10-10.
+- **Notes**: found 2026-10-10 during pre-implementation recovery; landed 2026-10-10. proposal/specs unchanged — CI changes no user-visible behavior. `docs/security/ssdf-profile.md` unchanged: its existing Gap/Trigger wording is accurate and now resolves to task 1.5; its row statuses update only when 1.5 is implemented.
 
 #### P2(1): design D5 and D6 lack the explicit rationale / alternatives subsection that D1–D2 and D7–D13 carry
 - **Status**: Consistent
