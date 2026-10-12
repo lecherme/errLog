@@ -28,7 +28,7 @@ Status column, not instead of it.
 |---|---|---|---|---|---|
 | PO.1 (define security requirements) | Captured only as OpenSpec design decisions (D2/D3/D9/D10 auth/storage/upload security model); not yet coded | `design.md` | planned | not yet coded | Group 2/5/9 tasks |
 | PO.3 (secure toolchain) | safe-commit is the change-control tooling component of the toolchain, and that component is automated (exact-file commit/push gating). This does not mean the full application CI/security toolchain is automated. | `tools/safe-commit.mjs`, `test/safe-commit.test.mjs`, `test/safe-commit-gate.test.mjs` | automated | App-level CI, lint/type-check/test runners, dependency/secret/SAST/container scanning are not yet established | Group 1 skeleton |
-| PO.5 (secure dev environment) | Docker-isolated dev skeleton per D1/D8/D11 | `design.md` | planned | no containers exist yet | Group 1 |
+| PO.5 (secure dev environment) | Docker-isolated local dev skeleton per D1/D8/D11 (task 1.1): fixed compose project `errlog-dev`; `web`/`pdf-processing`/`db` on one compose network; only `web` published, host loopback only (`127.0.0.1:${ERRLOG_WEB_PORT:-3100}` → container port 3000); `web`/`pdf-processing` run as non-root and hold no DB credentials; `POSTGRES_PASSWORD` supplied only from the shell at run time; base images pinned to exact version tags | `design.md`, `compose.yaml`, `apps/web/Dockerfile`, `services/pdf-processing/Dockerfile` | planned | No dedicated persistent DB volume yet (task 1.2); base images not digest-pinned and no image/dependency/secret scanning yet (task 1.5); `pdf-processing` is a placeholder until task 3.1; all containers share one host and failure domain (D8) | Group 1 |
 
 ## PS — Protect the Software
 

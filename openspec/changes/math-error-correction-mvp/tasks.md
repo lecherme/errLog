@@ -1,6 +1,6 @@
 ## 1. Local Development Foundation
 
-- [ ] 1.1 Set up docker-compose orchestrating three containers (Next.js, Python PDF Processing Service, self-hosted PostgreSQL) on an internal Docker network for local development only — no public ingress yet; verify all three start and reach each other by service name
+- [x] 1.1 Set up docker-compose orchestrating three containers (Next.js, Python PDF Processing Service, self-hosted PostgreSQL) on an internal Docker network for local development only — no public ingress yet; verify all three start and reach each other by service name
 - [ ] 1.2 Configure PostgreSQL in its own container with a dedicated named Docker volume, separate from the Next.js and Python service containers; verify the volume survives `docker compose down`/rebuild of the other two containers
 - [ ] 1.3 Implement the persistence schema for User, Identity, Child, WorksheetArchive, GradingSession, ErrorQuestion, CorrectionWorksheet (D4/D7) using standard, portable PostgreSQL (no non-standard extensions); verify migrations apply cleanly to a fresh instance
 - [ ] 1.4 Add a local-dev-only seed script inserting one allowlisted User/Identity/Child row for manual end-to-end testing; explicitly not a production auth path — verify the seeded identity can be used to drive the workflow manually ahead of real Auth (Group 5) being built

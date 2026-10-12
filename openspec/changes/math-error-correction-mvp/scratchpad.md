@@ -12,24 +12,163 @@ This is a working document, not a spec artifact.
   later planning amendments (e.g. refine P1(12): design D21 + task 1.5) are tracked through
   Git history, not by this SHA.
 - Implementation workflow is committed in `431413ee4484814002db0fe4022d1c87fe1a256e`.
-- Implementation progress: 0/89 tasks (task 1.5 added 2026-10-10 via refine P1(12): no task
+- Implementation progress: 1/89 tasks (task 1.5 added 2026-10-10 via refine P1(12): no task
   owned the CI required by `docs/implementation-workflow.md`; now anchored by design D21).
-- Application skeleton: not started.
-- Active Stage Contract: none.
-- Active Implementation Checkpoint: none — valid pre-implementation baseline.
+- Application skeleton: stage S1.1 (task 1.1) verified and reviewed; ready for safe-commit.
+- Active Stage Contract: S1.1 (task 1.1 only) — user-approved 2026-10-10.
+- Active Implementation Checkpoint: see "Implementation Checkpoint" section below.
 - Repository-local remote CI configuration observed at handoff: none; every new session
   must re-check actual remote CI/check status rather than trust this snapshot.
 - Git state observed before opening this continuity-document edit: clean and
   synchronized with `origin/experiment/install-opsx-refine`; every new session must
   re-inspect branch/HEAD/upstream/worktree.
-- Next action: a new session performs read-only recovery, runs `/opsx:apply
-  math-error-correction-mvp` only to inspect progress, then proposes the first small
-  Stage Contract beginning from task 1.1; no implementation starts before user approval.
+- Next action: follow the Implementation Checkpoint below.
 - Historical snapshots further below in this file (e.g. "Not yet written into any
   artifact", "These are not yet reflected in any artifact", "No implementation code
   exists; this is planning-artifact refinement only") are point-in-time
   refinement-process records, not current status — current status is this handoff block
   plus the actual proposal/spec/design/tasks content.
+
+## Implementation Checkpoint
+
+- Stage ID: S1.1
+- OpenSpec task IDs: 1.1
+- stageState: ready_for_safe_commit (after fix round 2 of 2; plan e7c94870… void)
+- Last updated: 2026-10-12 (Asia/Shanghai)
+- User approval: Stage Contract S1.1 approved 2026-10-10, with final amendments
+  (typescript@5.9.3 fixed; exact npm versions; lockfile via
+  `--package-lock-only --ignore-scripts`; compose Publishers/`port` are authoritative for
+  port exposure; rendered `docker compose config` checked for bind/named volumes;
+  failure cleanup limited to project `errlog-dev`).
+- Contract summary: compose project `errlog-dev` with `web` (Next.js 16.4.0, Node
+  24.21.0), `pdf-processing` (stdlib Python 3.13.16 placeholder, replaced by 3.1), `db`
+  (postgres:18.6-bookworm); reachable by service name on one bridge network; only `web`
+  published, host loopback only on `127.0.0.1:${ERRLOG_WEB_PORT:-3100}` → container 3000
+  (amended from `127.0.0.1:3000`, see amendment below); `POSTGRES_PASSWORD` runtime-only; non-root app
+  containers; minimal readiness healthchecks; no named volume, bind mount, schema, seed,
+  or CI (1.2–1.5 excluded).
+- Allowed paths: `compose.yaml`; `apps/web/{package.json,package-lock.json,tsconfig.json,
+  next.config.ts,next-env.d.ts,app/layout.tsx,app/page.tsx,Dockerfile,.dockerignore}`;
+  `services/pdf-processing/{app.py,Dockerfile,.dockerignore}`; `.gitignore` (new
+  entries only); `README.md` (new "Local development stack" section only);
+  `docs/security/ssdf-profile.md` (PO.5 Implementation/Evidence/Gap only); this file
+  (checkpoint + handoff status lines); `tasks.md` (1.1 checkbox only). Fix round 2
+  removed `apps/web/next-env.d.ts` from this list (generated, gitignored, not
+  committed).
+- Work completed: checkpoint created; failing evidence recorded (`docker compose -p
+  errlog-dev -f compose.yaml config` → "open .../compose.yaml: no such file or
+  directory", exit 1); all Allowed Files implemented; `package-lock.json` generated in
+  `node:24.21.0-bookworm-slim` with `--package-lock-only --ignore-scripts` (first attempt
+  hit a transient npm network error, retry succeeded; lockfileVersion 3, all packages
+  resolved from registry.npmjs.org, exact pinned versions confirmed).
+- Work remaining: safe-commit `check` → user approval → `commit` → separate push
+  approval → `push`.
+- Tests run: failing-evidence command; verification run 1 (2026-10-10): PASS — config
+  fails without `POSTGRES_PASSWORD`, config valid with it, rendered config has no
+  volumes/binds (only `web` ports: `127.0.0.1:3000->3000`), no literal password,
+  `docker compose build` of `web` (incl. `next build` with typescript@5.9.3) and
+  `pdf-processing` succeeded; FAIL — `up --wait`: "Bind for 0.0.0.0:3000 failed: port is
+  already allocated". Cleanup ran for project `errlog-dev` only (no containers, networks
+  or volumes left).
+- Verification run 2 (2026-10-12, full rerun from scratch, `ERRLOG_WEB_PORT=3100`;
+  image build reused BuildKit layer cache from run 1 — Dockerfiles/app inputs
+  unchanged): ALL PASS — password required; rendered default `127.0.0.1:3100->3000` and
+  override (3199) still loopback; no volumes/binds/literal password in rendered config;
+  build; `up --wait` with all three services healthy; interconnect matrix by service
+  name (web→pdf-processing:8000, web→db:5432, pdf-processing→web:3000,
+  pdf-processing→db:5432, db→web:3000, db→pdf-processing:8000) plus negative control;
+  `pg_isready`; Publishers web=`127.0.0.1:3100->3000` only, db/pdf-processing empty;
+  `docker compose port web 3000` = `127.0.0.1:3100`; `ss` shows only
+  `127.0.0.1:3100`, no `0.0.0.0`/`[::]`; host curl 200; uid web=1000,
+  pdf-processing=10001; runtime mounts: only db's anonymous volume. Cleanup left no
+  `errlog-dev` containers/networks/volumes (anonymous volume confirmed removed);
+  `vibe-home-frontend-1` and `codecombat-app` still running untouched.
+- `node --test test/safe-commit.test.mjs test/safe-commit-gate.test.mjs`: 27/27 pass;
+  `openspec validate "math-error-correction-mvp" --strict`: valid.
+- Verification run 3 (2026-10-12, after fix round 1; `next build` + TypeScript re-ran,
+  only `npm ci` layer cached): ALL PASS, same checks as run 2, plus the anonymous db
+  volume explicitly confirmed removed by ID, and no "reconfigured your tsconfig" message
+  from `next build`. safe-commit tests 27/27; strict validation valid.
+- After checking 1.1 (2026-10-12, before fix round 2): `openspec validate
+  "math-error-correction-mvp" --strict` valid; apply progress 1/89; scope check: `git
+  status` listed exactly 13 new + 5 modified allowed files; the `tasks.md` diff is only
+  the 1.1 checkbox. These checks are re-run after fix round 2 (see below).
+- Tests not yet run: none for this stage.
+- Reviewer findings, round 2 (re-review after fix round 1): verdict PASS, no blocking
+  findings. Two non-blocking items were deferred and recorded at that time; both were
+  RESOLVED in user-approved fix round 2 (see below):
+  - `next-env.d.ts` drift: it is now untracked and gitignored, and Next.js generates
+    it at build time.
+  - `.gitignore` covered only `.env`: it now has `.env*`.
+- Reviewer findings, round 1 (independent read-only review): verdict FAIL.
+  - B1 (blocking): `ssdf-profile.md` PO.5 said `127.0.0.1:3000`. Fixed: now
+    `127.0.0.1:${ERRLOG_WEB_PORT:-3100}` → container 3000; Status still `planned`.
+  - N1: stale port/date in this checkpoint. Fixed.
+  - N2: stale port in `apps/web/Dockerfile` comment. Fixed.
+  - N3: `next build` rewrote `tsconfig.json` include. Fixed by adding
+    `.next/dev/types/**/*.ts`. `next-env.d.ts` is still rewritten by `next build` to
+    import `.next/types/*.d.ts`. The generated form was not committed, because those
+    imports fail on a fresh checkout before any build. Initially deferred; resolved
+    in fix round 2: untracked and gitignored.
+  - N4: added `.env*` to `apps/web/.dockerignore`. Root `.gitignore` broadening was
+    initially deferred; resolved in fix round 2 (`.env` → `.env*`).
+  - N5: the verify script now checks the db anonymous volume by ID after cleanup.
+  - N6: README now says "project's own Compose bridge network" and "run from the
+    repository root", and the README probes have timeouts.
+  - N7: `npm ci --ignore-scripts` is a deliberate tightening; the lockfile has 0
+    install-script packages.
+  - N8: no OpenSpec flow-back needed; the host port is a local-dev fact, not product
+    semantics.
+- Files expected in worktree (after fix round 2: 12 new + 5 modified = 17): new
+  `compose.yaml`, `apps/web/**` (8 files; `next-env.d.ts` not committed),
+  `services/pdf-processing/**` (3 files); modified `.gitignore`, `README.md`,
+  `docs/security/ssdf-profile.md`, `tasks.md` (1.1 checked), this file.
+- Approved contract amendment (2026-10-12, host port conflict): host 3000 is held by
+  the pre-existing `vibe-home` project (`vibe-home-frontend-1`, `0.0.0.0:3000`) and
+  host 3001 by `codecombat-app` (`0.0.0.0:3001`). The user approved a configurable
+  loopback port: `127.0.0.1:${ERRLOG_WEB_PORT:-3100}:3000`; default 3100 was the lowest
+  port in 3100–3199 with no `ss` listener and no `docker ps` publication (read-only
+  check 2026-10-12). Container-internal port, healthcheck, and service-to-service
+  `web:3000` unchanged; `db`/`pdf-processing` still unpublished; no `.env` file. No
+  other project's containers, networks, volumes, or files were touched.
+- Approved contract amendment, fix round 2 of 2 — the final round (2026-10-12): the user
+  withheld approval of safe-commit plan
+  `e7c94870f2efd218f811b102388d0fd22b10f0c5a08bffebf148161a9526bd06`; that plan is
+  void and must not be committed. Changes approved for this round:
+  - `apps/web/next-env.d.ts` is no longer committed; it is deleted from the worktree.
+  - Root `.gitignore` gains `next-env.d.ts` and `*.tsbuildinfo`.
+  - Root `.gitignore` entry `.env` becomes `.env*`, with no exceptions.
+  - `tsconfig.json` still includes `next-env.d.ts`. Next.js generates it during build;
+    this must be proven by a real clean-source Docker build.
+  - New commit message has no attribution lines.
+  - Planned files: `apps/web/` 9 → 8, new files 13 → 12, total 18 → 17.
+- Blockers: none.
+- Round-2 fix applied (2026-10-12):
+  - `apps/web/next-env.d.ts` deleted.
+  - `.gitignore` now has `next-env.d.ts`, `*.tsbuildinfo`, `.env*` (replacing `.env`).
+  - `git ls-files -ci --exclude-standard` is empty: no tracked file is newly ignored.
+- Verification run 4 (2026-10-12, after fix round 2): ALL PASS.
+  - Build: only the base/`npm ci` layers were cached. `[web 6/7] COPY . .` and
+    `[web 7/7] npm run build` actually re-ran (DONE, not CACHED). Next.js 16.4.0
+    TypeScript check passed.
+  - `next-env.d.ts` was auto-generated inside the container by `next build`.
+  - Host worktree has no `next-env.d.ts`, `*.tsbuildinfo`, `.env*`, `node_modules` or
+    `.next`, both before and after the build.
+  - All earlier checks also passed: healthy ×3, 6-link interconnect matrix plus
+    negative control, Publishers web=`127.0.0.1:3100` only, `ss` loopback only, curl
+    200, uid 1000/10001, no bind mounts, anonymous volume removed by ID.
+  - safe-commit tests 27/27; `openspec validate --strict` valid.
+- Reviewer findings, round 3 (final re-review after fix round 2): verdict PASS, no
+  blocking findings. Non-blocking notes:
+  - Allowed-paths line clarified (done).
+  - A host-side `tsc --noEmit` needs `next-env.d.ts` generated first. Task 1.5 should
+    type-check via `next build` or generate the file first.
+  - `.env*` without exceptions also ignores any future `.env.example` (user-approved).
+- Final checks after round-3 PASS (2026-10-12): `openspec validate --strict` valid;
+  scope = 12 new + 5 modified = 17 allowed files; `tasks.md` diff is only the 1.1
+  checkbox.
+- Next action: run safe-commit `check` for S1.1 (17 files, no attribution lines) and wait
+  for user approval of the new plan.
 
 Last updated: 2026-10-10. Checkpoint:
 - P1(1): Consistent — landed, `openspec validate --strict` passed.

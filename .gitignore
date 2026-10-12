@@ -7,3 +7,11 @@
 !.claude/commands/opsx/refine.md
 .claude/skills/openspec-*/
 !.claude/skills/openspec-refine-change/
+
+# Local development stack (task 1.1).
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+.env*
+__pycache__/
