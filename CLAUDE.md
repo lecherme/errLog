@@ -73,7 +73,8 @@ The OpenSpec task checkbox is the only authoritative record of task completion.
   A Stage Contract states: stage ID; OpenSpec task IDs; expected outcome; the
   requirement/scenario/design it traces to; dependencies; sub-steps; the exact paths
   allowed to change; what is explicitly excluded; test requirements; contract-test
-  requirements; AI-eval requirements; security/privacy/trust-boundary impact; evidence
+  requirements; AI-eval requirements; user-journey E2E requirements;
+  security/privacy/trust-boundary impact; evidence
   of completion; and rollback approach.
 - If implementation surfaces a spec gap, conflict, or a need to change requirements,
   stop coding and return to OpenSpec refine. Never change product semantics unilaterally.
@@ -81,6 +82,17 @@ The OpenSpec task checkbox is the only authoritative record of task completion.
   implement, then confirm the test passes.
 - For UI, integration, and AI capabilities, use the fitting integration/E2E/eval
   approach — don't write low-value unit tests purely for form's sake.
+- Any stage that adds or changes user-visible behavior must include persistent
+  Playwright user-journey E2E derived from the OpenSpec Requirement/Scenario (design
+  D22): driven only through the real UI, asserting business and user-visible outcomes,
+  using synthetic data and deterministic test adapters for third-party providers,
+  committed to the repo, and run by the same local gate and CI. `not-applicable`
+  requires a stated reason. Temporary scripts, manual walkthroughs, DB injection, or
+  internal API calls are never product E2E.
+- User-visible stages use a bounded-context E2E worker after Stage Contract approval;
+  the worker must return the mandatory structured E2E Test Summary, and a separate
+  read-only reviewer must review the result. Large logs/traces remain in artifacts, not
+  the main context. See `docs/implementation-workflow.md`.
 - After implementation, run an independent read-only review. The reviewer reports only:
   blocking findings, non-blocking findings, evidence checked, and a verdict.
 - At most two rounds of targeted fixes. If blocking findings remain after that, stop

@@ -193,6 +193,10 @@ Last updated: 2026-10-10. Checkpoint:
   line is a historical record of that round, not the current next action.
 - P1(12): **Consistent** — landed 2026-10-10; `design.md` gained D21, `tasks.md` gained 1.5;
   no proposal/spec change; `openspec validate --strict` passed.
+- P1(13): **Consistent** — landed 2026-10-12; `design.md` gained D22 (+ D21 cross-refs);
+  `tasks.md` 1.5/4.1/4.7/7.7/13.2/13.4/13.6 updated; `CLAUDE.md` and
+  `docs/implementation-workflow.md` gained the user-journey E2E rules; no proposal/spec
+  change; task total 89 unchanged; `openspec validate --strict` passed.
 
 ### Status Legend
 - **Open**: Not yet captured consistently in OpenSpec artifacts
@@ -209,6 +213,7 @@ Last updated: 2026-10-10. Checkpoint:
 - **Artifact document-quality**: ran (2026-09-02). Tasks carry explicit `verify …` acceptance criteria throughout. Minor rationale/wording gaps — P2(1), P2(2), P2(3).
 - **Requirements interview** (`/opsx:explore`, 2026-09-09 → 2026-09-16, read-only, no artifact edits): 13 numbered product-tradeoff questions + 2 unnumbered foundational corrections, answered and confirmed by the user (see Confirmed Product Decisions below). This surfaced a materially larger scope than the original photo↔page question (P1(1)) — multi-child model, photo-only degraded flow, answer-region capture, AI error-cause, redo tracking — none of which existed in `proposal`/`specs`/`design`/`tasks` before this interview. Recorded as **P1(1) revised** + **P1(4)–P1(10)** + **P2(4)** below. These are not yet reflected in any artifact.
 - **Workflow/SSDF → Design/Tasks (process traceability)**: ran 2026-10-10. CI required by `docs/implementation-workflow.md` (CI section) and pointed to by `docs/security/ssdf-profile.md` "Group 1 CI"/"Group 1 skeleton" triggers had no owning design decision or task — P1(12).
+- **Workflow → Design/Tasks (user-journey E2E governance)**: ran 2026-10-12. No rule, design decision, or task owned Scenario-derived, persistent, UI-driven product E2E, its test data/adapter isolation, or its CI integration — P1(13).
 
 ### Key References
 - `design.md` D5 (AI Task Contracts), D8 (deployment + backup), D13 (AI Provider Selection Gate)
@@ -520,6 +525,21 @@ Source: `/opsx:explore` read-only interview in this project's conversation histo
 - **Suggested fix**: add D21 "本地验证与远程 CI 使用同一验证链" before Risks / Trade-offs; add 1.5 after 1.4 citing D21; 1.1–1.4 unchanged.
 - **User decision needed?**: No — direction, scope (incl. migration/seed checks and Actions supply-chain constraints), and three-file edit set approved by the user 2026-10-10.
 - **Notes**: found 2026-10-10 during pre-implementation recovery; landed 2026-10-10. proposal/specs unchanged — CI changes no user-visible behavior. `docs/security/ssdf-profile.md` unchanged: its existing Gap/Trigger wording is accurate and now resolves to task 1.5; its row statuses update only when 1.5 is implemented.
+
+#### P1(13): Automated product user-journey E2E has no governance, design anchor, or task ownership
+- **Status**: Consistent
+- **Files & locations**:
+  - `CLAUDE.md` — Implementation stage workflow (Stage Contract fields; "fitting integration/E2E/eval approach")
+  - `docs/implementation-workflow.md` — Flow, Stage Contract template, CI coverage chain; no E2E section
+  - `design.md` — D21 mentions "integration/E2E" only generically; no E2E decision
+  - `tasks.md` — 4.7/7.7/13.2 "Run and record … walkthrough"; 7.7/13.2 "real sample worksheet"; 13.4 covers only the 1.4 seed; 13.6 states no test method
+- **Evidence**: no rule required Scenario-derived, persistent, UI-driven E2E; no rule forbade DB/internal-API driving in general; no failure-evidence, test-data, or test-adapter production-isolation requirement; "real sample" wording conflicted with SECURITY.md/D21's no-real-child-data rule; no defined owner for the first Playwright infrastructure.
+- **Expected state**: D22 states the technical principles (no agent orchestration); the workflow holds the procedure, E2E worker / stage reviewer separation, the mandatory E2E Test Summary, PASS/FAIL/BLOCKED rules, evidence hygiene, CI-without-LLM, and the fallback; CLAUDE.md holds concise mandatory rules; tasks assign ownership.
+- **Impact**: without it, user-visible stages could close on manual walkthroughs or throwaway scripts, CI could not regress user journeys, and test adapters could leak into production as auth/upload bypasses.
+- **Recommended artifact**: `design.md` (D21 cross-refs + new D22), `tasks.md` (1.5, 4.1, 4.7, 7.7, 13.2, 13.4, 13.6), plus `CLAUDE.md` and `docs/implementation-workflow.md`.
+- **Suggested fix**: as landed (see Notes).
+- **User decision needed?**: No — all decisions made by the user 2026-10-12: extend 13.4 (no new task, total stays 89); storage test double chosen by 4.1's Stage Contract under D22 constraints; UI assertions authoritative, read-only DB checks supplementary and declared; 1.4 identity as labeled pre-journey precondition until login exists; 13.2 via `workflow_dispatch` + protected Environment with manual approval and an approval-gated cleanup runbook; Chromium only, desktop + mobile viewport; retries = 0; 4.7 clarified as pipeline integration; one fresh stage reviewer (never the E2E worker), after the full local gate; E2E pre-review fix loops don't consume reviewer fix rounds but stop after two failed attempts on the same blocker; `.only` always zero (never approvable; `forbidOnly`, any `.only` = FAIL); `.skip`/`.fixme` zero by default, exceptions only when approved item by item (refined 2026-10-12 after reviewer finding); integrity `n/a` only with reason, reviewer-confirmed; `.claude/agents/e2e-worker.md` + `stage-reviewer.md` created by 4.1; `.artifacts/e2e/` gitignored evidence directory, CI artifacts 7-day retention; flow order checkbox → post-checkbox validation → `ready_for_safe_commit`.
+- **Notes**: found and landed 2026-10-12. proposal/specs/SECURITY.md/ssdf-profile.md unchanged — no product semantics change; SSDF rows update only when the controls exist. Task total unchanged (89), progress 1/89; 1.1 untouched. No Playwright/CI/agent/test file created by this refine. `openspec validate --strict` passed after the edits.
 
 #### P2(1): design D5 and D6 lack the explicit rationale / alternatives subsection that D1–D2 and D7–D13 carry
 - **Status**: Consistent

@@ -755,11 +755,12 @@ locality_retry:
 
 **决策**：本地 stage-completion gate 与远程 CI 是同一条验证链的两个执行位置，不是两套标准：
 
-- **初始建立与增量扩展**：Group 1 技术骨架建立后（tasks 1.5），在仓库实际使用的 GitHub 远程上建立初始 GitHub Actions CI；后续 Groups 随能力真实落地，在**同一** pipeline 上增量扩展（Python lint/type-check/pytest、contract tests、AI smoke eval、integration/E2E、SAST、container scanning 等），不另建独立 pipeline。
+- **初始建立与增量扩展**：Group 1 技术骨架建立后（tasks 1.5），在仓库实际使用的 GitHub 远程上建立初始 GitHub Actions CI；后续 Groups 随能力真实落地，在**同一** pipeline 上增量扩展（Python lint/type-check/pytest、contract tests、AI smoke eval、integration/E2E（用户旅程 E2E 见 D22，由 tasks 4.1 首次接入）、SAST、container scanning 等），不另建独立 pipeline。
 - **两个执行位置、各自的门禁职责**：safe-commit `check` 之前在本地运行 stage-completion gate，它是勾选 task 与创建 commit 的前置条件；push 之后，远程 CI 对已提交、已推送的 HEAD 独立复验，作为后续 dependent stage、merge 与 release 的门禁——它不是该 commit 自身的前置条件，避免 commit 前的循环依赖。
 - **命令等价**：本地与远程运行相同或等价的命令，且可通过一个文档化的本地入口复现；不允许只存在于 CI 的检查，也不允许弱于 CI 的本地替代。
-- **只验证真实存在的能力**：CI 只覆盖当时已真实存在的代码与配置；不得为 Python 服务、contract tests、AI eval 或 E2E 预先建立占位检查或伪造结果。
+- **只验证真实存在的能力**：CI 只覆盖当时已真实存在的代码与配置；不得为 Python 服务、contract tests、AI eval 或 E2E 预先建立占位检查或伪造结果；Playwright E2E job 只在 4.1 的真实 UI 与 E2E 基础设施存在后启用。
 - **数据与凭据**：CI 不使用真实 secret/凭据、儿童数据或家庭照片；基础验证不依赖仓库 secret，所触及的数据均为合成数据。
+- **生产冒烟不属于本 pipeline**：部署后的生产冒烟 E2E（D22、tasks 13.2）是单独的、手动 `workflow_dispatch` 触发、绑定受保护 GitHub Environment 并需人工审批的部署验证 workflow，不由 push/PR 触发，也不计入单一验证 pipeline；只有它可以使用 Environment 运行时 secret，push/PR 验证仍不依赖任何 secret。它同样遵守最小 `GITHUB_TOKEN` 权限、第三方 action 锁定 SHA、禁用 `pull_request_target`。
 - **GitHub Actions 自身的最小供应链约束**：workflow/job 声明最小 `GITHUB_TOKEN` permissions（默认 `contents: read`，仅在确有需要时逐项提升）；第三方 action 锁定到不可变引用，优先完整 commit SHA，不使用浮动 tag 或分支；不使用 `pull_request_target` 等会让不可信 PR 代码在持有 secrets 或写权限 token 的上下文中执行的触发方式。
 - **扫描阻塞策略**：secret scanning 与 dependency vulnerability scanning 的阻塞策略（哪些发现使运行失败、哪些仅报告）依据所选工具的实际能力和首次运行得到的 baseline 明确记录，不凭空编造阈值。
 - **远程失败处理**：已推送 commit 的远程 CI 失败时，沿用 `docs/implementation-workflow.md` 的 repair/recovery 规则——该 stage 进入修复状态，不得开始依赖它的 stage，不得 merge 或 release；修复通过新的 Stage Contract（或明确批准的定向修复）完成，不 amend、不绕过。
@@ -772,6 +773,35 @@ locality_retry:
 - 仅依靠人工本地检查：无法对每次推送持续防回归，且依赖执行者记得运行——拒绝。
 - 允许只在 CI 中存在、本地无法复现的检查：失败难以诊断，造成本地与 CI 环境漂移——拒绝。
 - 每个 Group 建立独立 pipeline：检查集合与约束容易彼此不一致——拒绝。
+
+---
+
+### D22: 产品用户旅程自动化 E2E——从 Scenario 派生、仓库持久化、确定性 adapter 与真实集成分层
+
+**决策**：凡新增或改变用户可见行为的 stage，都须以 Playwright 驱动真实浏览器页面的持久化 E2E 作为验收证据之一。E2E 是 D21 同一验证链中的一层，不是独立测试体系。本决策只规定技术原则；开发阶段的执行程序见 `docs/implementation-workflow.md`。
+
+- **适用判定**：每个 stage 声明 `required` / `extends-existing` / `reuses-existing` / `not-applicable`。只有不新增、不改变用户可见行为的 stage 才能用 `not-applicable`，并须写明理由。底层任务不强制浏览器 E2E。
+- **场景来源**：每条 E2E 追溯到具体的 spec Requirement/Scenario 和 task verify 子句，从规格派生，不从实现反推。发现 Scenario 缺口时回流 OpenSpec；测试代码不得定义产品语义。
+- **驱动与断言**：只通过真实页面和用户可见交互驱动。不得直接写数据库、调用内部 API/helper、操纵领域对象，或用 1.4/4.3 dev seed/fixture 驱动被测旅程。Group 5 登录可用之前，1.4 dev 身份可作为明确标注的旅程前置条件，但不得称为登录 E2E；登录可用后一律经登录 UI。UI 可见结果是权威断言；只读 DB 检查只能作为事先声明的补充证据，永远不用于准备数据、驱动流程或替代 UI 断言。必须断言业务结果和用户可见结果，不能只断言页面能打开。
+- **持久化与单一 suite**：经批准的 E2E 提交进仓库，后续功能扩展同一 suite，不另建测试体系，不用临时脚本或人工走查替代。已提交 suite 中 `.skip` / `.fixme` / `.only` 默认为 0；删除或弱化既有测试须逐项批准。
+- **确定性**：本地 gate 与 CI 中 retries = 0，retry 不得把失败变为通过；重复运行时好时坏即为 flaky，视为失败。初始只用 Chromium 引擎，适用旅程覆盖一个桌面 viewport 和一个移动 viewport；WebKit/Firefox 按真实兼容性需要再加入。
+- **确定性测试 adapter**：普通本地 gate 与 CI 中，只有第三方外部 Provider（AI Task Contract、OTP 投递、对象存储）可以在既有 port（D2 AuthService、D3/D9 StorageService、D5 Task Contract）之后换成测试 adapter。自托管的 PDF Processing Service、PostgreSQL、Next.js 使用真实实现。测试 adapter 只产生候选或投递结果，不得绕过 D6/D14/D16/D20 的人工确认，也不得绕过 D9 的"浏览器直传 → 服务端验证"；存储类测试替身的具体形态由首个需要它的 stage 决定，但必须真实经过这条链路，不得以内部 API 或直接写存储冒充。测试 adapter 在生产构建/配置中必须不存在或 fail-closed（引入它的 stage 自测，tasks 13.4 复验）。各 adapter 由首个需要它的 stage 引入，不预建。
+- **数据与隔离**：只用合成 User/Child、合成 PDF 与合成批改照片，不含真实儿童身份、家庭照片或生产数据。每次运行使用独立的临时数据库与存储命名空间，运行后可清理，不触及 1.2 的开发 named volume；不使用真实凭据。
+- **失败证据**：失败时保留 Playwright trace、截图、视频和必要的服务日志，作为本地非 Git 证据和 CI artifact，不提交进 Git。CI 只依据测试进程退出码和确定性策略判定结果，不使用任何 LLM。
+- **与 CI 的关系**：遵循 D21 的命令等价原则。首条 E2E 及其基础设施由 4.1 建立，并增量接入 1.5 的单一 pipeline；此前不建立占位 E2E。
+- **分层边界**：fake-adapter E2E 通过不代表真实 Provider 集成通过。真实 AI 能力由 D13/D17/D19 eval 验证，真实 OTP/OSS 由各自的集成任务验证。部署后的生产冒烟 E2E（13.2）通过受保护 Environment 人工审批触发，使用专用测试身份、运行时 secret 和合成数据，清理走单独审批的运维 runbook，不进入普通 PR CI；fake-adapter 的 CI 结果不得作为它的证据。
+
+**范围**：开发验证决策，不改变用户可见的产品行为，不对应任何 Requirement。具体命令、Playwright 版本、viewport、目录结构和存储测试替身形态由 4.1 的 Stage Contract 决定。
+
+**理由**：Scenario 派生加持久化，让每个用户可见行为都有可回归的证据，而不是一次性走查；只替换第三方 Provider，让 CI 稳定、不依赖 secret，同时保持自托管链路真实；生产隔离要求防止测试 adapter 变成认证或上传的绕过口；retries = 0 防止 flaky 被吸收成"通过"。
+
+**替代方案**：
+- 人工走查记录：不可重复、不防回归——拒绝。
+- 每次临时生成测试脚本：没有稳定基线、无法审查——拒绝。
+- 普通 CI 使用真实 AI/OTP/OSS：结果不确定、需要 secret、有外部副作用——拒绝。
+- 用 API 级测试替代浏览器 E2E：无法验证用户可见结果——拒绝替代，两者分层共存。
+- 在 1.5 预建占位 E2E：违反 D21——拒绝。
+- Cypress：跨源直传（D9）和多 browser context（13.6）支持较弱——不选。
 
 ## Risks / Trade-offs
 

@@ -9,25 +9,48 @@ A Stage Contract is an execution boundary for the current batch of work, not a n
 
 ## Flow
 
-1. Select a small batch of related OpenSpec tasks.
-2. Read-only: confirm dependencies and current baseline (code, tests, prior stages).
-3. Draft a Stage Contract (template below).
+1. Read-only recovery (see Session continuity and recovery).
+2. Read the cited OpenSpec Requirement/Scenario/design/task text for a small batch of
+   related tasks; confirm dependencies and the current baseline (code, tests, prior
+   stages).
+3. Draft a Stage Contract (template below), including User-journey E2E requirements.
 4. Obtain user approval — no edits before this.
-5. Where applicable: write tests / establish failing evidence first.
-6. Implement, strictly within the Stage Contract's allowed paths.
-7. Scope gate: diff actual changes against the approved paths and task scope.
-8. Local verification — the stage-completion gate (see CI below: once a skeleton and
-   CI exist, these are the CI-equivalent commands, run locally).
-9. Contract tests / AI eval where the Stage Contract lists them as applicable.
-10. Independent read-only review.
-11. At most two rounds of targeted fixes; unresolved blocking findings stop the stage.
-12. Milestone convergence review after a Group or key end-to-end flow (not every stage).
-13. Check the corresponding `tasks.md` checkbox(es) — only after 8–11 all pass.
-14. safe-commit `check` → user approval → `commit` (the checkpoint's
-    `ready_for_safe_commit` state and the checkbox change are committed in this same
-    batch — see Session continuity and recovery).
-15. Ask separately about push → user approval → `push`.
-16. Remote CI runs against the pushed commit — see CI below for what happens next.
+5. Write the Implementation Checkpoint with `stageState: in_progress`.
+6. Where applicable: failing evidence first; unit, integration, contract tests, AI eval.
+7. Implement product code strictly within the Stage Contract's allowed paths.
+8. E2E worker (see User-journey E2E) writes/updates tests within worker allowed paths.
+9. E2E worker runs the focused E2E → E2E Test Summary.
+10. E2E worker runs the full E2E suite → E2E Test Summary.
+11. Main agent verifies each Summary against the machine-readable Playwright report and
+    records the compressed result in the checkpoint.
+12. Product defect or spec gap → main agent fixes it within the Stage Contract, or
+    performs an OpenSpec flow-back; the worker re-verifies focused → full, each with its
+    own Summary. If the same E2E blocker survives two consecutive fix attempts, stop and
+    report — never loop or weaken tests.
+13. Main agent runs the full local stage-completion gate (see CI below: once a skeleton
+    and CI exist, these are the CI-equivalent commands, run locally, including the full
+    E2E suite), producing machine evidence and an E2E Test Summary. Scope gate: diff
+    actual changes against the approved paths and task scope.
+14. Independent read-only stage reviewer — a fresh sub-agent, never the E2E worker —
+    reviews product code, tests, and E2E using the final gate evidence and Summaries.
+15. Blocking findings: targeted fix → re-run the affected tests (E2E via the worker) and
+    the full local gate → re-review. At most two reviewer fix rounds; unresolved
+    blocking findings stop the stage.
+16. Reviewer PASS and every gate PASS → check the corresponding `tasks.md` checkbox(es).
+17. After checking: re-run `openspec validate "<change>" --strict`, the progress count,
+    and the final scope/worktree check.
+18. Update the checkpoint to `stageState: ready_for_safe_commit`. Never set this before
+    the checkbox is checked.
+19. safe-commit `check` (the checkpoint's `ready_for_safe_commit` state, the checkbox
+    change, and the stage files are committed in this same batch — see Session
+    continuity and recovery).
+20. User approves the plan → `commit`.
+21. Ask separately about push → user approval → `push`.
+22. Remote CI runs the committed deterministic suite against the pushed commit — no LLM,
+    no sub-agent (see CI below).
+23. Remote CI failure → a new repair stage (see CI below).
+
+Milestone convergence review follows a Group or key end-to-end flow (not every stage).
 
 ## Hard rules
 
@@ -47,6 +70,13 @@ A Stage Contract is an execution boundary for the current batch of work, not a n
 - CI, contract tests, and AI eval are established only once the corresponding tech
   skeleton actually exists. Never fabricate commands, interfaces, thresholds, or results
   ahead of that.
+- User-journey E2E is a persistent repo asset. `.only` is always forbidden — no Stage
+  Contract exception exists; `forbidOnly` stays on and any `.only` is a FAIL. `.skip` and
+  `.fixme` are zero in the committed suite by default; an exception to them, and any
+  deletion or weakening of an existing test or assertion, must be listed item by item in
+  the Stage Contract and explicitly user-approved.
+- A stage whose E2E applicability is not `not-applicable` cannot reach independent
+  review, a checkbox, or safe-commit without a valid E2E Test Summary for the final tree.
 
 ## Stage Contract template
 
@@ -61,6 +91,24 @@ A Stage Contract is an execution boundary for the current batch of work, not a n
 - Test requirements
 - Contract-test requirements (Contracts affected: list which of the 5 named boundaries)
 - AI-eval requirements
+- User-journey E2E requirements:
+  - Applicability: required / extends-existing / reuses-existing / not-applicable + reason
+  - Requirement/Scenario IDs (+ task verify clauses)
+  - E2E worker applicability: worker (author+run) / worker (run-only) / main-agent
+    fallback / none + reason
+  - Minimal context supplied to worker (exact paths)
+  - Worker allowed paths (exact E2E spec / fixture / helper / test-adapter paths)
+  - Tests to add / modify / reuse (by path)
+  - Synthetic data / fixtures
+  - Test identity (1.4 pre-journey precondition, or login UI + test OTP adapter)
+  - External dependencies and the test adapter replacing each
+  - Read-only DB checks (if any): what, and why — supplementary only
+  - Cleanup strategy
+  - User-visible / business assertions
+  - Viewports covered (desktop / mobile)
+  - Approved `.skip` / `.fixme` exceptions (default: none)
+  - Expected E2E Test Summary (scenarios expected to be covered)
+  - Failure artifact locations (`.artifacts/e2e/…`; CI artifact names)
 - Security/privacy/trust-boundary impact
 - Evidence of completion
 - Rollback approach
@@ -88,7 +136,8 @@ never an `amend`, never a bypass.
 
 Coverage builds up incrementally in both layers as the stack exists: `openspec validate
 --strict` → frontend lint/type-check/unit → Python lint/type-check/pytest →
-integration/E2E → safe-commit's own tests → secret scanning → dependency vulnerability
+integration → user-journey E2E (from task 4.1; deterministic Playwright, no LLM) →
+safe-commit's own tests → secret scanning → dependency vulnerability
 scanning → SAST/container scanning once applicable.
 
 ## Contract tests
@@ -101,6 +150,225 @@ analysis state machine. Every Stage Contract touching one of these lists it unde
 covering: normal request/response; invalid input; empty result; timeout/Provider
 failure; low-confidence/`unavailable`; version incompatibility; idempotency/retry;
 permission/ownership checks.
+
+## User-journey E2E
+
+Design D22 holds the technical principles; this section holds the procedure and agent
+orchestration.
+
+### Applicability
+`required` (new journey) / `extends-existing` (an existing journey changes) /
+`reuses-existing` (existing E2E covers it; run, no test changes expected) /
+`not-applicable` + reason (the stage reviewer verifies the reason).
+
+### Derivation
+The main agent proposes scenarios from the cited Requirement/Scenario and task verify
+clauses; the user approves them in the Stage Contract. Never reverse-engineer scenarios
+from the implementation. A gap is an OpenSpec flow-back.
+
+### Driving and assertions
+Only real pages and user-visible interactions drive the product. Never drive or prepare
+product flow via DB writes, internal APIs/helpers, domain objects, or the 1.4/4.3 dev
+seed/fixture. Until real login UI and the test OTP adapter exist, the 1.4 dev identity
+may serve as an explicitly labeled pre-journey precondition; such tests are never called
+login E2E, and once login exists all E2E authenticate through the login UI. UI-visible
+results are the authoritative assertions. A read-only DB check may add diagnostic or
+invariant evidence only if declared in the Stage Contract, and never prepares data,
+drives flow, or replaces a UI assertion. Asserting only that a page loads is never enough.
+
+### Single suite and configuration
+One Playwright config, one fixture/helper/adapter set, extended by every later stage.
+Chromium engine only initially; applicable journeys run at one desktop and one mobile
+viewport (chosen by 4.1). WebKit/Firefox are added only on a real compatibility need.
+retries = 0 in the local gate and CI. `forbidOnly` is on; `.only` is never allowed.
+Skipped/fixme must be zero unless approved item by item per the Hard rules.
+
+### Delegation and context isolation
+Never delegated by the main agent: final interpretation of requirements; product
+trade-offs; changes to OpenSpec semantics; Stage Contract approval handling; the final
+completion judgment; task checkboxes; checkpoint state; safe-commit/commit/push/merge;
+the choice between product fix, test fix, environment handling, and flow-back.
+
+After approval, for `required`/`extends-existing`, the main agent starts the E2E worker
+(`.claude/agents/e2e-worker.md` once 4.1 creates it) in a fresh context. For
+`reuses-existing` it may start the worker run-only (affected tests + full suite).
+
+Minimal context, given as exact paths the worker may read:
+1. the approved Stage Contract's User-journey E2E section;
+2. the exact cited Requirement/Scenario text;
+3. the relevant task verify clauses;
+4. D22;
+5. this section;
+6. the Playwright config;
+7. the E2E specs/fixtures/helpers/test adapters directly related to the journey;
+8. the worker allowed paths;
+9. how to start the product;
+10. the unified local E2E command;
+11. the page routes or public boundary contracts the journey touches;
+12. the journey-relevant part of the current product diff.
+
+Never given: the main conversation, scratchpad history, unrelated specs/decisions, other
+Groups' content, unrelated Git history, old bulky logs/traces/screenshots/videos.
+Missing necessary context → the worker lists the exact gaps and returns `BLOCKED`. It
+never widens its reading to the whole repository.
+
+### E2E worker permissions
+May: add/modify Playwright tests, synthetic fixtures, E2E helpers, and test-adapter
+implementation files within worker allowed paths; run focused and full-suite E2E;
+inspect traces, screenshots, videos, service logs; classify failures as product defect
+/ test defect / environment issue / spec gap / external dependency issue; return the
+Summary.
+
+May not: change or reinterpret a Requirement/Scenario; widen the journey; touch
+unapproved files; modify product code, including the configuration/composition wiring
+that selects or excludes test adapters; write the DB to prepare product flow; call
+internal APIs/helpers/domain objects in place of user actions; use the 1.4/4.3 dev
+fixture to drive product E2E; delete or weaken assertions; add `.skip`/`.only`/`.fixme`
+and report PASS; add retries; change checkboxes or the checkpoint; run
+safe-commit/commit/push/merge; adapt a test to a product defect. Needing product code,
+out-of-contract paths, or OpenSpec → stop and return `BLOCKED`.
+
+Agent definition files reinforce this procedure but are not a path allowlist; the Stage
+Contract, the scope gate, and the stage reviewer remain the controls.
+
+### Mandatory E2E Test Summary
+Every E2E execution — by the worker, the main agent's step-13 gate, or fallback — ends
+with an E2E Test Summary (template below), whatever the result. Counts come from the
+machine-readable Playwright report; the main agent verifies them against that report.
+No valid Summary → no review, no checkbox, no safe-commit. CI produces only the
+machine-readable report, never an LLM Summary.
+
+```markdown
+### E2E Test Summary
+- Stage ID:
+- OpenSpec task IDs:
+- Result: PASS / FAIL / BLOCKED
+- Execution type: focused / full-suite / re-verification
+- Executor: E2E worker / main-agent fallback / main-agent stage gate
+- Started / finished (Asia/Shanghai):
+- Duration:
+
+#### Coverage
+- Requirement/Scenario IDs:
+- Task verify clauses:
+- User journeys tested (+ viewports):
+- Normal path:
+- Exception path:
+- Recovery path:
+- Explicitly not covered (+ reason):
+
+#### Files
+- New E2E files / Modified E2E files / Reused E2E files:
+- Fixtures / Helpers / Test adapters:
+
+#### Execution
+- Commands actually run:
+- Machine-readable report path:
+- Exit code:
+- total / passed / failed / skipped / fixme / retries / flaky / interrupted:
+
+#### Findings
+- Blocking:
+- Non-blocking:
+- Per failure: test id — category (product defect / test defect / environment issue /
+  spec gap / external dependency issue) — minimal excerpt (never full stdout/stderr)
+
+#### Evidence
+- Trace / screenshot / video paths (`.artifacts/e2e/…`) or CI artifact names:
+- Container/service log paths:
+- Failure report path:
+- If PASS with only report + Summary kept: retention policy applied
+
+#### Integrity checks — value: yes / no / n/a + reason   (expected value in brackets)
+- Driven entirely through real UI [yes]
+- Direct DB writes [no]
+- Read-only DB checks used — if yes, declared in Stage Contract and supplementary only [no, or yes+declared]
+- Internal API/helper driving [no]
+- Dev fixture used as product entry [no]
+- 1.4 identity precondition used — labeled, not called login E2E [n/a, or yes+labeled]
+- Synthetic isolated data only [yes]
+- Real child data or family photos touched [no]
+- Real production credentials used [no]
+- Test data cleaned up [yes]
+- `.skip` present [no, unless Stage-Contract-approved]
+- `.only` present [no — never approvable]
+- `.fixme` present [no, unless Stage-Contract-approved]
+- Existing tests deleted [no, unless approved]
+- Existing assertions weakened [no, unless approved]
+- Passed only via retry / flaky observed [no]
+- Test adapters absent or fail-closed in production configuration [yes; n/a only if this stage has no test adapter]
+
+`n/a` is valid only when the concept does not exist in this stage; each needs a reason,
+and the stage reviewer confirms it.
+
+#### Decision
+- Product fix needed / Test fix needed / Environment handling needed / OpenSpec flow-back needed:
+- Ready for stage reviewer:
+- Final verdict:
+```
+
+### PASS / FAIL / BLOCKED rules
+- **BLOCKED** — the test process did not run, or could not produce a valid run: missing
+  context (exact gaps listed); a need for product code, out-of-contract paths, or
+  OpenSpec changes; an environment that cannot start (category: environment issue).
+- **FAIL** — the tests ran, and any of: exit code ≠ 0; failed > 0; interrupted > 0
+  (abnormal exit); unapproved skipped/fixme; any `.only` present (never approvable);
+  flaky (inconsistent across repeated runs); DB/API/helper bypass or dev-fixture driving; real child data,
+  family photos, production data, or credentials used; a test adapter reachable in
+  production configuration; test data not cleaned up; a required Scenario not covered;
+  only page load asserted; missing commands, counts, or evidence, or counts not matching
+  the report file; any integrity check off its expected value or an unjustified `n/a`.
+- **PASS** — the tests ran completely and every rule above is satisfied.
+
+Flaky is always FAIL and blocks the stage by default. The main agent decides whether to
+fix it or ask the user for explicit acceptance; an acceptance is recorded in the
+checkpoint and never rewrites the Summary to PASS.
+
+### Evidence retention and context hygiene
+Default local evidence directory: `.artifacts/e2e/` (gitignored, never a safe-commit
+path). Passing runs may keep only the machine report and the Summary; failing runs keep
+trace, screenshots, video, and the necessary service logs. Local retention/cleanup is
+defined by 4.1's Stage Contract. CI uploads evidence as artifacts with a 7-day retention.
+
+Commands redirect full output to files. The main agent receives only the Summary,
+artifact paths, and the minimal excerpt a blocker needs, and reads specific evidence
+fragments only while handling that blocker. The checkpoint records only: result, counts,
+covered Scenario IDs, blocking/non-blocking findings, evidence paths/artifact names,
+next action. Never copy logs into `scratchpad.md`.
+
+### Product-fix and re-verification loop
+The worker reports a product defect and stops. The main agent examines it, fixes it
+within allowed files or performs a flow-back, then re-runs the same worker or a fresh
+minimal-context one: focused first, then full suite, each with a Summary. Completion
+rests on the Playwright exit code plus the verified full counts, never on a
+natural-language judgment. These pre-review loops do not consume reviewer fix rounds,
+but the same blocker surviving two consecutive fix attempts stops the stage for a report.
+
+### Stage reviewer
+Exactly one independent stage reviewer (`.claude/agents/stage-reviewer.md` once 4.1
+creates it): a fresh read-only sub-agent, never the E2E worker. No sub-agent is author,
+executor, and reviewer at once. It checks product code and tests per "Independent review
+& convergence", plus: Requirement/Scenario traceability; genuine UI driving; no
+DB/API/helper bypass; no deleted/skipped/weakened tests; no dev fixture in product E2E;
+test adapters unable to reach production; synthetic isolated data only; business and
+user-visible assertions; tests following the spec, not the implementation; Summary
+consistency with the actual files, commands, report, and artifacts; every `n/a` and
+every `not-applicable` justified. Output: structured findings + verdict, no bulk logs.
+
+### CI has no LLM
+Remote CI runs only the committed deterministic Playwright suite: no Claude, no
+sub-agent, no generated tests, no main-session context, no LLM-based verdict. Pass/fail
+is the exit code plus deterministic policy (`forbidOnly` — any `.only` fails, retries =
+0, zero skip/fixme unless approved item by item). Evidence is uploaded as 7-day artifacts.
+
+### Fallback when sub-agents are unavailable
+If a sub-agent cannot be created, the main agent performs the worker role under the
+same minimal-context, allowed-paths, evidence-isolation, and Summary rules, and reports
+"E2E worker unavailable — main-agent fallback". If the project agent definitions exist
+but are not loaded in the current session, a general-purpose sub-agent given the
+definition's content counts as the worker or reviewer; report this. A separate reviewer
+is still required; if none can run, stop and report rather than self-review. The
+fallback never skips, narrows, or weakens E2E.
 
 ## AI eval
 
@@ -122,7 +390,9 @@ requirement/scenario/design traced to implementation and tests; permissions, inp
 validation, fail-closed behavior, idempotency, concurrency, and data isolation; no
 Provider-specific type leaking into Domain; no "tests pass but product semantics are
 wrong"; any fact requiring flow-back to OpenSpec; any unrelated refactor or unapproved
-scope expansion.
+scope expansion. The per-stage reviewer is the single stage reviewer defined under
+User-journey E2E: it reviews after the full local gate, with the gate's machine evidence
+and all E2E Test Summaries, and also covers the E2E checklist there.
 
 **Convergence review** (after a Group or key end-to-end flow) additionally checks:
 proposal/spec/design/tasks/code/tests still agree; no retired mechanism lingers; every
