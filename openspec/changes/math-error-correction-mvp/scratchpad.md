@@ -7,15 +7,16 @@ This is a working document, not a spec artifact.
 
 - This section is the authoritative current handoff; later historical refinement notes
   may contain superseded point-in-time wording.
-- Handoff verified: 2026-10-10 (Asia/Shanghai).
+- Handoff verified: 2026-10-12 (Asia/Shanghai).
 - Planning baseline: completed and committed in `aff5550317f99a9acf82fc6c480d617fa18198e5`;
   later planning amendments (e.g. refine P1(12): design D21 + task 1.5) are tracked through
   Git history, not by this SHA.
 - Implementation workflow is committed in `431413ee4484814002db0fe4022d1c87fe1a256e`.
-- Implementation progress: 1/89 tasks (task 1.5 added 2026-10-10 via refine P1(12): no task
+- Implementation progress: 2/89 tasks (task 1.5 added 2026-10-10 via refine P1(12): no task
   owned the CI required by `docs/implementation-workflow.md`; now anchored by design D21).
-- Application skeleton: stage S1.1 (task 1.1) verified and reviewed; ready for safe-commit.
-- Active Stage Contract: S1.1 (task 1.1 only) — user-approved 2026-10-10.
+- Application skeleton: stage S1.1 (task 1.1) committed in `e02c65f`; stage S1.2 (task 1.2)
+  verified and reviewed; ready for safe-commit.
+- Active Stage Contract: S1.2 (task 1.2 only) — user-approved 2026-10-12.
 - Active Implementation Checkpoint: see "Implementation Checkpoint" section below.
 - Repository-local remote CI configuration observed at handoff: none; every new session
   must re-check actual remote CI/check status rather than trust this snapshot.
@@ -31,144 +32,103 @@ This is a working document, not a spec artifact.
 
 ## Implementation Checkpoint
 
-- Stage ID: S1.1
-- OpenSpec task IDs: 1.1
-- stageState: ready_for_safe_commit (after fix round 2 of 2; plan e7c94870… void)
+- Stage ID: S1.2
+- OpenSpec task IDs: 1.2
+- stageState: ready_for_safe_commit
 - Last updated: 2026-10-12 (Asia/Shanghai)
-- User approval: Stage Contract S1.1 approved 2026-10-10, with final amendments
-  (typescript@5.9.3 fixed; exact npm versions; lockfile via
-  `--package-lock-only --ignore-scripts`; compose Publishers/`port` are authoritative for
-  port exposure; rendered `docker compose config` checked for bind/named volumes;
-  failure cleanup limited to project `errlog-dev`).
-- Contract summary: compose project `errlog-dev` with `web` (Next.js 16.4.0, Node
-  24.21.0), `pdf-processing` (stdlib Python 3.13.16 placeholder, replaced by 3.1), `db`
-  (postgres:18.6-bookworm); reachable by service name on one bridge network; only `web`
-  published, host loopback only on `127.0.0.1:${ERRLOG_WEB_PORT:-3100}` → container 3000
-  (amended from `127.0.0.1:3000`, see amendment below); `POSTGRES_PASSWORD` runtime-only; non-root app
-  containers; minimal readiness healthchecks; no named volume, bind mount, schema, seed,
-  or CI (1.2–1.5 excluded).
-- Allowed paths: `compose.yaml`; `apps/web/{package.json,package-lock.json,tsconfig.json,
-  next.config.ts,next-env.d.ts,app/layout.tsx,app/page.tsx,Dockerfile,.dockerignore}`;
-  `services/pdf-processing/{app.py,Dockerfile,.dockerignore}`; `.gitignore` (new
-  entries only); `README.md` (new "Local development stack" section only);
-  `docs/security/ssdf-profile.md` (PO.5 Implementation/Evidence/Gap only); this file
-  (checkpoint + handoff status lines); `tasks.md` (1.1 checkbox only). Fix round 2
-  removed `apps/web/next-env.d.ts` from this list (generated, gitignored, not
-  committed).
-- Work completed: checkpoint created; failing evidence recorded (`docker compose -p
-  errlog-dev -f compose.yaml config` → "open .../compose.yaml: no such file or
-  directory", exit 1); all Allowed Files implemented; `package-lock.json` generated in
-  `node:24.21.0-bookworm-slim` with `--package-lock-only --ignore-scripts` (first attempt
-  hit a transient npm network error, retry succeeded; lockfileVersion 3, all packages
-  resolved from registry.npmjs.org, exact pinned versions confirmed).
+- User approval: Stage Contract S1.2 approved 2026-10-12 with six decisions and a
+  security amendment (below).
+- Contract summary: `db` data directory on a project-scoped named volume, key `pgdata`
+  (default project name `errlog-dev_pgdata`); no fixed `name:`, no `external: true`, no
+  bind mount; mount target taken from `docker image inspect postgres:18.6-bookworm`
+  (stop and report if ambiguous). Rebuild/replace of `web`/`pdf-processing` and
+  `docker compose down` (never `-v`) must not delete or recreate the volume (D8 layer 1);
+  any other compose project name gets its own volume (D22 isolation). No data migration.
+  E2E: `not-applicable` (infrastructure persistence only; no user-visible behavior).
+- Decisions: (1) project-scoped `pgdata`; (2) mount target from image inspect; (3)
+  cleanup only of this stage's temp project T: exact `T_pgdata`, exact images `T-web`,
+  `T-pdf-processing`, each re-verified by full name and label
+  `com.docker.compose.project=T` before removal; no wildcard, prune, or `down -v`; never
+  touch `errlog-dev_*` or other projects; unconfirmed ownership → report only; (4) no
+  dynamic smoke in project `errlog-dev`; (5) verification scripts live only in the
+  session temp directory, never committed; (6) old anonymous volumes: report only.
+- Security amendment: never print/save/report full `docker compose config` output
+  (it expands env vars); extract only non-sensitive fields (volumes, ports, volume
+  types, top-level volume names); static check that `compose.yaml` hardcodes no
+  password; the temporary password never appears in the repo, this checkpoint, logs,
+  command summaries, or evidence (redacted in reported commands).
+- Allowed paths: `compose.yaml` (`db.volumes`, top-level `volumes:`, header comment);
+  `README.md` ("Local development stack" section only); `docs/security/ssdf-profile.md`
+  (PO.5 Implementation/Evidence/Gap only, Status stays `planned`); this file (checkpoint
+  + handoff status lines); `tasks.md` (1.2 checkbox only).
+- Excluded: tasks 1.3–1.5; backups/`pg_dump`; Dockerfiles; `web`/`pdf-processing`
+  config; db ports; PGDATA override; digest pinning; `.gitignore`; `.env*`; governance
+  files; OpenSpec planning artifacts; Playwright/E2E; deleting any existing Docker
+  resource.
+- Work completed: checkpoint created; read-only preflight; failing evidence; edits to
+  `compose.yaml`, `README.md`, `ssdf-profile.md` PO.5; temp-project verification and
+  cleanup; full local gate and scope gate; independent review (PASS); review fixes;
+  1.2 checkbox; post-checkbox checks.
+- Preflight (2026-10-12, read-only): `postgres:18.6-bookworm` declares
+  `VOLUME /var/lib/postgresql`, `PGDATA=/var/lib/postgresql/18/docker` → mount target
+  `/var/lib/postgresql` (unambiguous). `COMPOSE_PROJECT_NAME` unset; Compose v5.1.3. No
+  `errlog-dev` containers/networks/volumes; `errlog-dev_pgdata` absent. 10 pre-existing
+  unlabeled anonymous volumes (created 2026-05-14..2026-07-11, predating this project,
+  no compose label): report-only, untouched. Host ports 3100–3199 free; verification
+  used 3150.
+- Failing evidence (static, pre-edit): extracted `docker compose -p errlog-dev config`
+  fields → `FAIL: top-level volumes != ['pgdata']: []; db volumes: []`, exit 1.
+- Static checks (post-edit, non-sensitive fields only, never full config output): PASS
+  for default project (piped check only, no saved file), `-p errlog-dev` (→
+  `errlog-dev_pgdata`) and `-p
+  errlog-v12-static` (→ `errlog-v12-static_pgdata`): only `db` mounts `pgdata` at
+  `/var/lib/postgresql` (type volume, not external, no fixed name); `web`/`pdf-processing`
+  no mounts; only `web` published, loopback. Config without `POSTGRES_PASSWORD` fails
+  (exit 1). `compose.yaml` password references: only the `${POSTGRES_PASSWORD:?…}`
+  interpolation and a comment.
+- Dynamic verification (2026-10-12, temp project `errlog-v12-20261012060437`, port 3150,
+  random in-process password, never printed): 47/47 PASS, `FAILS=0` — healthy ×3; db has exactly
+  one mount (named `T_pgdata` → `/var/lib/postgresql`, no anonymous volume); sentinel
+  written/read in DB `verify_1_2`; after `up --build --force-recreate --no-deps` of
+  `web`+`pdf-processing` both replaced, db container unchanged, sentinel intact, volume
+  CreatedAt unchanged; after db container replacement sentinel intact; after `down`
+  (no `-v`) no T containers/networks, volume survives with same CreatedAt; after `up`
+  again sentinel intact; S1.1 regression (6-link interconnect + negative control,
+  `pg_isready`, publishers web=`127.0.0.1:3150` only, `compose port`, `ss` loopback only,
+  curl 200, uid 1000/10001). Password scan of all evidence files: absent.
+- Cleanup: `down` (no `-v`) for T; `T_pgdata`, `T-web:latest`, `T-pdf-processing:latest`
+  removed by exact name after re-verifying label `com.docker.compose.project=T`.
+  Before/after snapshots of containers (ID+state), volumes, networks, images:
+  identical. `errlog-dev_pgdata` never created; other projects untouched.
+- Evidence (session temp dir, not committed): `verify.sh`, `extract.py`,
+  `check_volume.py`, `ev/run.log`, before/after snapshots.
+- Local gate: safe-commit tests 27/27; `openspec validate --strict` valid. Scope gate:
+  worktree = 4 modified allowed files (`README.md`, `compose.yaml`, `ssdf-profile.md`,
+  this file).
 - Work remaining: safe-commit `check` → user approval → `commit` → separate push
   approval → `push`.
-- Tests run: failing-evidence command; verification run 1 (2026-10-10): PASS — config
-  fails without `POSTGRES_PASSWORD`, config valid with it, rendered config has no
-  volumes/binds (only `web` ports: `127.0.0.1:3000->3000`), no literal password,
-  `docker compose build` of `web` (incl. `next build` with typescript@5.9.3) and
-  `pdf-processing` succeeded; FAIL — `up --wait`: "Bind for 0.0.0.0:3000 failed: port is
-  already allocated". Cleanup ran for project `errlog-dev` only (no containers, networks
-  or volumes left).
-- Verification run 2 (2026-10-12, full rerun from scratch, `ERRLOG_WEB_PORT=3100`;
-  image build reused BuildKit layer cache from run 1 — Dockerfiles/app inputs
-  unchanged): ALL PASS — password required; rendered default `127.0.0.1:3100->3000` and
-  override (3199) still loopback; no volumes/binds/literal password in rendered config;
-  build; `up --wait` with all three services healthy; interconnect matrix by service
-  name (web→pdf-processing:8000, web→db:5432, pdf-processing→web:3000,
-  pdf-processing→db:5432, db→web:3000, db→pdf-processing:8000) plus negative control;
-  `pg_isready`; Publishers web=`127.0.0.1:3100->3000` only, db/pdf-processing empty;
-  `docker compose port web 3000` = `127.0.0.1:3100`; `ss` shows only
-  `127.0.0.1:3100`, no `0.0.0.0`/`[::]`; host curl 200; uid web=1000,
-  pdf-processing=10001; runtime mounts: only db's anonymous volume. Cleanup left no
-  `errlog-dev` containers/networks/volumes (anonymous volume confirmed removed);
-  `vibe-home-frontend-1` and `codecombat-app` still running untouched.
-- `node --test test/safe-commit.test.mjs test/safe-commit-gate.test.mjs`: 27/27 pass;
-  `openspec validate "math-error-correction-mvp" --strict`: valid.
-- Verification run 3 (2026-10-12, after fix round 1; `next build` + TypeScript re-ran,
-  only `npm ci` layer cached): ALL PASS, same checks as run 2, plus the anonymous db
-  volume explicitly confirmed removed by ID, and no "reconfigured your tsconfig" message
-  from `next build`. safe-commit tests 27/27; strict validation valid.
-- After checking 1.1 (2026-10-12, before fix round 2): `openspec validate
-  "math-error-correction-mvp" --strict` valid; apply progress 1/89; scope check: `git
-  status` listed exactly 13 new + 5 modified allowed files; the `tasks.md` diff is only
-  the 1.1 checkbox. These checks are re-run after fix round 2 (see below).
 - Tests not yet run: none for this stage.
-- Reviewer findings, round 2 (re-review after fix round 1): verdict PASS, no blocking
-  findings. Two non-blocking items were deferred and recorded at that time; both were
-  RESOLVED in user-approved fix round 2 (see below):
-  - `next-env.d.ts` drift: it is now untracked and gitignored, and Next.js generates
-    it at build time.
-  - `.gitignore` covered only `.env`: it now has `.env*`.
-- Reviewer findings, round 1 (independent read-only review): verdict FAIL.
-  - B1 (blocking): `ssdf-profile.md` PO.5 said `127.0.0.1:3000`. Fixed: now
-    `127.0.0.1:${ERRLOG_WEB_PORT:-3100}` → container 3000; Status still `planned`.
-  - N1: stale port/date in this checkpoint. Fixed.
-  - N2: stale port in `apps/web/Dockerfile` comment. Fixed.
-  - N3: `next build` rewrote `tsconfig.json` include. Fixed by adding
-    `.next/dev/types/**/*.ts`. `next-env.d.ts` is still rewritten by `next build` to
-    import `.next/types/*.d.ts`. The generated form was not committed, because those
-    imports fail on a fresh checkout before any build. Initially deferred; resolved
-    in fix round 2: untracked and gitignored.
-  - N4: added `.env*` to `apps/web/.dockerignore`. Root `.gitignore` broadening was
-    initially deferred; resolved in fix round 2 (`.env` → `.env*`).
-  - N5: the verify script now checks the db anonymous volume by ID after cleanup.
-  - N6: README now says "project's own Compose bridge network" and "run from the
-    repository root", and the README probes have timeouts.
-  - N7: `npm ci --ignore-scripts` is a deliberate tightening; the lockfile has 0
-    install-script packages.
-  - N8: no OpenSpec flow-back needed; the host port is a local-dev fact, not product
-    semantics.
-- Files expected in worktree (after fix round 2: 12 new + 5 modified = 17): new
-  `compose.yaml`, `apps/web/**` (8 files; `next-env.d.ts` not committed),
-  `services/pdf-processing/**` (3 files); modified `.gitignore`, `README.md`,
-  `docs/security/ssdf-profile.md`, `tasks.md` (1.1 checked), this file.
-- Approved contract amendment (2026-10-12, host port conflict): host 3000 is held by
-  the pre-existing `vibe-home` project (`vibe-home-frontend-1`, `0.0.0.0:3000`) and
-  host 3001 by `codecombat-app` (`0.0.0.0:3001`). The user approved a configurable
-  loopback port: `127.0.0.1:${ERRLOG_WEB_PORT:-3100}:3000`; default 3100 was the lowest
-  port in 3100–3199 with no `ss` listener and no `docker ps` publication (read-only
-  check 2026-10-12). Container-internal port, healthcheck, and service-to-service
-  `web:3000` unchanged; `db`/`pdf-processing` still unpublished; no `.env` file. No
-  other project's containers, networks, volumes, or files were touched.
-- Approved contract amendment, fix round 2 of 2 — the final round (2026-10-12): the user
-  withheld approval of safe-commit plan
-  `e7c94870f2efd218f811b102388d0fd22b10f0c5a08bffebf148161a9526bd06`; that plan is
-  void and must not be committed. Changes approved for this round:
-  - `apps/web/next-env.d.ts` is no longer committed; it is deleted from the worktree.
-  - Root `.gitignore` gains `next-env.d.ts` and `*.tsbuildinfo`.
-  - Root `.gitignore` entry `.env` becomes `.env*`, with no exceptions.
-  - `tsconfig.json` still includes `next-env.d.ts`. Next.js generates it during build;
-    this must be proven by a real clean-source Docker build.
-  - New commit message has no attribution lines.
-  - Planned files: `apps/web/` 9 → 8, new files 13 → 12, total 18 → 17.
+- Reviewer findings, round 1 (fresh read-only reviewer): verdict PASS, no blocking.
+  Non-blocking: (N1) checkpoint said "50/50" dynamic checks; `ev/run.log` has 47 —
+  fixed to 47/47. (N2) README named `errlog-dev_pgdata` without noting that
+  `COMPOSE_PROJECT_NAME` overrides the project name — caveat added. (N3) the db
+  container replacement step alone would not catch an anonymous volume (Compose
+  carries those over on recreate); the exact-mount assertion and the sentinel
+  surviving `down`/`up` are what prove persistence; failing evidence is static only;
+  `verify.sh` has no trap — accepted, not changed. (N4) default-project static check
+  had no saved file — wording clarified. (N5) cleanup scope confirmed correct.
+- Reviewer findings, round 2 (re-review of N1/N2/N4 fixes): verdict PASS, no
+  blocking. Optional, not applied: `compose.yaml` header comment lacks the
+  `COMPOSE_PROJECT_NAME` caveat (it already says "under the default project name");
+  uneven line wrapping in this checkpoint.
+- After checking 1.2 (2026-10-12): `openspec validate --strict` valid; progress 2/89;
+  scope = 5 modified allowed files (`README.md`, `compose.yaml`, `ssdf-profile.md`,
+  this file, `tasks.md`); the `tasks.md` diff is only the 1.2 checkbox.
+- Files expected in worktree: modified `compose.yaml`, `README.md`,
+  `docs/security/ssdf-profile.md`, this file, `tasks.md` (1.2 checked).
 - Blockers: none.
-- Round-2 fix applied (2026-10-12):
-  - `apps/web/next-env.d.ts` deleted.
-  - `.gitignore` now has `next-env.d.ts`, `*.tsbuildinfo`, `.env*` (replacing `.env`).
-  - `git ls-files -ci --exclude-standard` is empty: no tracked file is newly ignored.
-- Verification run 4 (2026-10-12, after fix round 2): ALL PASS.
-  - Build: only the base/`npm ci` layers were cached. `[web 6/7] COPY . .` and
-    `[web 7/7] npm run build` actually re-ran (DONE, not CACHED). Next.js 16.4.0
-    TypeScript check passed.
-  - `next-env.d.ts` was auto-generated inside the container by `next build`.
-  - Host worktree has no `next-env.d.ts`, `*.tsbuildinfo`, `.env*`, `node_modules` or
-    `.next`, both before and after the build.
-  - All earlier checks also passed: healthy ×3, 6-link interconnect matrix plus
-    negative control, Publishers web=`127.0.0.1:3100` only, `ss` loopback only, curl
-    200, uid 1000/10001, no bind mounts, anonymous volume removed by ID.
-  - safe-commit tests 27/27; `openspec validate --strict` valid.
-- Reviewer findings, round 3 (final re-review after fix round 2): verdict PASS, no
-  blocking findings. Non-blocking notes:
-  - Allowed-paths line clarified (done).
-  - A host-side `tsc --noEmit` needs `next-env.d.ts` generated first. Task 1.5 should
-    type-check via `next build` or generate the file first.
-  - `.env*` without exceptions also ignores any future `.env.example` (user-approved).
-- Final checks after round-3 PASS (2026-10-12): `openspec validate --strict` valid;
-  scope = 12 new + 5 modified = 17 allowed files; `tasks.md` diff is only the 1.1
-  checkbox.
-- Next action: run safe-commit `check` for S1.1 (17 files, no attribution lines) and wait
-  for user approval of the new plan.
+- Next action: run safe-commit `check` for S1.2 (5 files) and wait for user approval
+  of the plan.
 
 Last updated: 2026-10-10. Checkpoint:
 - P1(1): Consistent — landed, `openspec validate --strict` passed.

@@ -2,6 +2,10 @@
 # and only on host loopback (default 127.0.0.1:3100; override with
 # ERRLOG_WEB_PORT). POSTGRES_PASSWORD must come from the shell environment at run
 # time; never commit it.
+# PostgreSQL data lives in the project-scoped named volume `pgdata` (task 1.2;
+# `errlog-dev_pgdata` under the default project name). `docker compose down` and
+# rebuilding `web`/`pdf-processing` keep it; any other project name (`-p`) gets its
+# own separate volume.
 name: errlog-dev
 
 services:
@@ -41,6 +45,9 @@ services:
     image: postgres:18.6-bookworm
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in the shell environment (never commit it)}
+    volumes:
+      # postgres:18 images declare VOLUME /var/lib/postgresql (PGDATA is a subdirectory).
+      - pgdata:/var/lib/postgresql
     networks:
       - errlog
     healthcheck:
@@ -52,3 +59,6 @@ services:
 
 networks:
   errlog: {}
+
+volumes:
+  pgdata: {}

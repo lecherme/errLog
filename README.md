@@ -57,8 +57,18 @@ docker compose up -d --build --wait   # start; open http://127.0.0.1:3100 (or yo
 docker compose down                   # normal stop
 ```
 
-`docker compose down -v` also deletes the database's data volume. Use it only to
-deliberately clean up disposable test resources, never as the everyday stop command.
+PostgreSQL data is stored in the project's named volume `errlog-dev_pgdata` (this name
+assumes `COMPOSE_PROJECT_NAME` is not set, since it overrides the project name). It
+persists across `docker compose down` and across rebuilding or recreating `web` and
+`pdf-processing`. `docker compose down -v` or `docker volume rm` permanently delete this
+local development database. Use them only when you deliberately want to discard that
+data, never as the everyday stop command.
+`POSTGRES_PASSWORD` only takes effect the first time the volume is initialized. Changing
+it later does not change the database password.
+
+CI, E2E runs, and temporary verification must never use the `errlog-dev` project name.
+Pass a different project name (`docker compose -p <name> ...`) so they get their own
+volume and never touch `errlog-dev_pgdata`.
 
 Verify that the services reach each other by service name (after `up --wait`):
 
