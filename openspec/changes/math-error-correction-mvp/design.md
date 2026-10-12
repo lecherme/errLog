@@ -113,6 +113,7 @@ Domain 层所有业务归属引用 User.id，不引用任何 Auth Provider 的�
 User（认证账号）
   └── Identity[]（Provider 标识）
   └── Child[]（学习数据主体，一个 User 下可有多个）
+  │     └── Child.displayName（Child 自身的字段，不是 User 的字段；用户输入的展示标签，规范化后非空、非唯一，不作身份标识）
   └── currentChildId（可变指针，默认指向上次使用的 Child；创建/切换规则见 child-profile capability）
 
 WorksheetArchive（卷子档案）        由 User 管理，家庭级共享
@@ -162,6 +163,8 @@ CorrectionWorksheet（订正卷）       归属 Child
 `currentChildId` 本身须满足：SHALL 始终指向发起请求的 User 自己拥有的 Child，SHALL NOT 被设置或提交为其他 User 拥有的 Child；首个孩子档案创建后 SHALL 立即成为 `currentChildId`；只要该 User 拥有至少一个 Child，`currentChildId` SHALL 始终指向一个有效的、属于该 User 的 Child。创建 `GradingSession` 时，服务端 SHALL 重新校验待绑定的 childId 确实归属发起请求的 User，SHALL NOT 直接信任客户端提交的 childId。
 
 `WorksheetArchive` 保持 User 级家庭共享，不因当前 Child 上下文而具有 Child 归属，可被不同 Child 的 `GradingSession` 复用。孩子档案的创建、切换、onboarding 行为由新增的 `child-profile` capability 定义；MVP 不实现孩子档案的独立登录、删除、合并或家庭成员邀请等完整管理能力。
+
+**孩子档案显示名称**：Child 的身份始终是稳定的内部 UUID；`displayName` 只是供家庭账号在列表、当前孩子展示和切换入口中识别孩子的展示标签。创建时必填；系统按应用定义的空白规范去除首尾空白，规范化结果 SHALL 非空，并保存规范化后的值（不保存原始输入）。同一 User 下 SHALL 允许重名；身份、切换以及任何归属、绑定或校验 SHALL 始终使用 UUID，SHALL NOT 依据 `displayName`。MVP 不提供重命名、删除，不增加头像、生日等资料字段，也不设定产品层面的最大长度。持久化层 SHALL 具备相应的"非空白"防御约束，作为应用层规范化之外的第二道防线；具体约束表达式及其对普通空格、tab、换行等空白输入的覆盖测试由实现该 schema 的 Stage Contract 决定（简单的仅去除空格字符的约束不足以覆盖全部空白输入）。**理由**：仅凭内部 UUID 无法让用户在多孩子列表中做出选择；把名称当唯一键会在真实家庭（同名、昵称）中制造无意义的冲突，并诱使代码按名称而非 UUID 绑定数据。**已否决**：名称唯一约束（理由同上）；无名称、按序号显示（不可识别）；同时引入完整资料管理（超出 MVP，见 child-profile 排除项）。
 
 ---
 
