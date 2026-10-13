@@ -79,3 +79,31 @@ docker compose exec -T pdf-processing python -c "import urllib.request; urllib.r
 docker compose exec -T pdf-processing python -c "import socket; socket.create_connection(('db', 5432), 4).close()"
 docker compose exec -T db bash -c 'exec 3<>/dev/tcp/web/3000 && exec 4<>/dev/tcp/pdf-processing/8000'
 ```
+
+### Database migrations
+
+The schema lives in forward-only SQL migrations in `apps/web/db/migrations/`, applied by
+node-pg-migrate. Migrations never run when `web` starts. Apply them explicitly with a
+one-off `web` container, which uses the migration files built into the image (rebuild
+after adding one) and reads the connection string from `DATABASE_URL`, passed by name
+only. Build it from `POSTGRES_PASSWORD` rather than typing it, and never print it
+(URL-encode the password if it contains reserved characters):
+
+```bash
+export DATABASE_URL="postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres"
+docker compose build web
+docker compose run --rm --no-deps -e DATABASE_URL web npm run db:migrate
+unset DATABASE_URL
+```
+
+A repeated run reports `No migrations to run!`. Never change a migration that is already
+in Git history; add a new one instead.
+
+`npm run test:db` checks the schema constraints. Run it only against a disposable,
+already-migrated database in a separate Compose project (`-p <name>`), never against
+`errlog-dev`. It reads only `ERRLOG_SCHEMA_TEST_DATABASE_URL` (passed by name, like
+above) and rolls back everything it writes:
+
+```bash
+docker compose -p <name> run --rm --no-deps -e ERRLOG_SCHEMA_TEST_DATABASE_URL web npm run test:db
+```

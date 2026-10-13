@@ -7,16 +7,16 @@ This is a working document, not a spec artifact.
 
 - This section is the authoritative current handoff; later historical refinement notes
   may contain superseded point-in-time wording.
-- Handoff verified: 2026-10-12 (Asia/Shanghai).
+- Handoff verified: 2026-10-13 (Asia/Shanghai).
 - Planning baseline: completed and committed in `aff5550317f99a9acf82fc6c480d617fa18198e5`;
   later planning amendments (e.g. refine P1(12): design D21 + task 1.5) are tracked through
   Git history, not by this SHA.
 - Implementation workflow is committed in `431413ee4484814002db0fe4022d1c87fe1a256e`.
-- Implementation progress: 2/89 tasks (task 1.5 added 2026-10-10 via refine P1(12): no task
+- Implementation progress: 3/89 tasks (task 1.5 added 2026-10-10 via refine P1(12): no task
   owned the CI required by `docs/implementation-workflow.md`; now anchored by design D21).
 - Application skeleton: stage S1.1 (task 1.1) committed in `e02c65f`; stage S1.2 (task 1.2)
-  verified and reviewed; ready for safe-commit.
-- Active Stage Contract: S1.2 (task 1.2 only) — user-approved 2026-10-12.
+  committed in `c960445`; stage S1.3 (task 1.3) verified and reviewed; ready for safe-commit.
+- Active Stage Contract: S1.3 (task 1.3 only) — user-approved 2026-10-13.
 - Active Implementation Checkpoint: see "Implementation Checkpoint" section below.
 - Repository-local remote CI configuration observed at handoff: none; every new session
   must re-check actual remote CI/check status rather than trust this snapshot.
@@ -32,102 +32,134 @@ This is a working document, not a spec artifact.
 
 ## Implementation Checkpoint
 
-- Stage ID: S1.2
-- OpenSpec task IDs: 1.2
+- Stage ID: S1.3
+- OpenSpec task IDs: 1.3
 - stageState: ready_for_safe_commit
-- Last updated: 2026-10-12 (Asia/Shanghai)
-- User approval: Stage Contract S1.2 approved 2026-10-12 with six decisions and a
-  security amendment (below).
-- Contract summary: `db` data directory on a project-scoped named volume, key `pgdata`
-  (default project name `errlog-dev_pgdata`); no fixed `name:`, no `external: true`, no
-  bind mount; mount target taken from `docker image inspect postgres:18.6-bookworm`
-  (stop and report if ambiguous). Rebuild/replace of `web`/`pdf-processing` and
-  `docker compose down` (never `-v`) must not delete or recreate the volume (D8 layer 1);
-  any other compose project name gets its own volume (D22 isolation). No data migration.
-  E2E: `not-applicable` (infrastructure persistence only; no user-visible behavior).
-- Decisions: (1) project-scoped `pgdata`; (2) mount target from image inspect; (3)
-  cleanup only of this stage's temp project T: exact `T_pgdata`, exact images `T-web`,
-  `T-pdf-processing`, each re-verified by full name and label
-  `com.docker.compose.project=T` before removal; no wildcard, prune, or `down -v`; never
-  touch `errlog-dev_*` or other projects; unconfirmed ownership → report only; (4) no
-  dynamic smoke in project `errlog-dev`; (5) verification scripts live only in the
-  session temp directory, never committed; (6) old anonymous volumes: report only.
-- Security amendment: never print/save/report full `docker compose config` output
-  (it expands env vars); extract only non-sensitive fields (volumes, ports, volume
-  types, top-level volume names); static check that `compose.yaml` hardcodes no
-  password; the temporary password never appears in the repo, this checkpoint, logs,
-  command summaries, or evidence (redacted in reported commands).
-- Allowed paths: `compose.yaml` (`db.volumes`, top-level `volumes:`, header comment);
-  `README.md` ("Local development stack" section only); `docs/security/ssdf-profile.md`
-  (PO.5 Implementation/Evidence/Gap only, Status stays `planned`); this file (checkpoint
-  + handoff status lines); `tasks.md` (1.2 checkbox only).
-- Excluded: tasks 1.3–1.5; backups/`pg_dump`; Dockerfiles; `web`/`pdf-processing`
-  config; db ports; PGDATA override; digest pinning; `.gitignore`; `.env*`; governance
-  files; OpenSpec planning artifacts; Playwright/E2E; deleting any existing Docker
-  resource.
-- Work completed: checkpoint created; read-only preflight; failing evidence; edits to
-  `compose.yaml`, `README.md`, `ssdf-profile.md` PO.5; temp-project verification and
-  cleanup; full local gate and scope gate; independent review (PASS); review fixes;
-  1.2 checkbox; post-checkbox checks.
-- Preflight (2026-10-12, read-only): `postgres:18.6-bookworm` declares
-  `VOLUME /var/lib/postgresql`, `PGDATA=/var/lib/postgresql/18/docker` → mount target
-  `/var/lib/postgresql` (unambiguous). `COMPOSE_PROJECT_NAME` unset; Compose v5.1.3. No
-  `errlog-dev` containers/networks/volumes; `errlog-dev_pgdata` absent. 10 pre-existing
-  unlabeled anonymous volumes (created 2026-05-14..2026-07-11, predating this project,
-  no compose label): report-only, untouched. Host ports 3100–3199 free; verification
-  used 3150.
-- Failing evidence (static, pre-edit): extracted `docker compose -p errlog-dev config`
-  fields → `FAIL: top-level volumes != ['pgdata']: []; db volumes: []`, exit 1.
-- Static checks (post-edit, non-sensitive fields only, never full config output): PASS
-  for default project (piped check only, no saved file), `-p errlog-dev` (→
-  `errlog-dev_pgdata`) and `-p
-  errlog-v12-static` (→ `errlog-v12-static_pgdata`): only `db` mounts `pgdata` at
-  `/var/lib/postgresql` (type volume, not external, no fixed name); `web`/`pdf-processing`
-  no mounts; only `web` published, loopback. Config without `POSTGRES_PASSWORD` fails
-  (exit 1). `compose.yaml` password references: only the `${POSTGRES_PASSWORD:?…}`
-  interpolation and a comment.
-- Dynamic verification (2026-10-12, temp project `errlog-v12-20261012060437`, port 3150,
-  random in-process password, never printed): 47/47 PASS, `FAILS=0` — healthy ×3; db has exactly
-  one mount (named `T_pgdata` → `/var/lib/postgresql`, no anonymous volume); sentinel
-  written/read in DB `verify_1_2`; after `up --build --force-recreate --no-deps` of
-  `web`+`pdf-processing` both replaced, db container unchanged, sentinel intact, volume
-  CreatedAt unchanged; after db container replacement sentinel intact; after `down`
-  (no `-v`) no T containers/networks, volume survives with same CreatedAt; after `up`
-  again sentinel intact; S1.1 regression (6-link interconnect + negative control,
-  `pg_isready`, publishers web=`127.0.0.1:3150` only, `compose port`, `ss` loopback only,
-  curl 200, uid 1000/10001). Password scan of all evidence files: absent.
-- Cleanup: `down` (no `-v`) for T; `T_pgdata`, `T-web:latest`, `T-pdf-processing:latest`
-  removed by exact name after re-verifying label `com.docker.compose.project=T`.
-  Before/after snapshots of containers (ID+state), volumes, networks, images:
-  identical. `errlog-dev_pgdata` never created; other projects untouched.
-- Evidence (session temp dir, not committed): `verify.sh`, `extract.py`,
-  `check_volume.py`, `ev/run.log`, before/after snapshots.
-- Local gate: safe-commit tests 27/27; `openspec validate --strict` valid. Scope gate:
-  worktree = 4 modified allowed files (`README.md`, `compose.yaml`, `ssdf-profile.md`,
-  this file).
+- Last updated: 2026-10-13 (Asia/Shanghai)
+- User approval: Stage Contract S1.3 approved 2026-10-13 (Q1–Q17 decisions plus T1–T3).
+- Contract summary: one forward-only pure-SQL node-pg-migrate migration creating the
+  identity/ownership/association skeleton — 7 domain-entity tables + 1
+  `correction_worksheet_item` association table, 8 tables in total (`app_user`,
+  `identity`, `child`, `worksheet_archive`, `grading_session`, `error_question`,
+  `correction_worksheet`, `correction_worksheet_item`). UUID PKs via core
+  `gen_random_uuid()`; explicitly named constraints; cross-User/cross-Child links
+  rejected by composite FKs; NO ACTION FKs; no trigger, ENUM, custom function, or
+  extension; only `uploaded_at` timestamp. `child.display_name` CHECK rejects empty,
+  boundary-whitespace-only and untrimmed values over the set space/tab/LF/CR/VT/FF
+  (T2); internal whitespace and duplicate names allowed. Migration runs only via
+  explicit `npm run db:migrate` (never on web startup); tool defaults kept (single
+  transaction, advisory lock, `pgmigrations`, order check). Persistent `node:test`
+  constraint test reads only `ERRLOG_SCHEMA_TEST_DATABASE_URL`, fails if unset, rolls
+  back everything (T3). E2E: `not-applicable` (persistence schema only; no UI, route, or
+  user-visible behavior).
+- Dependencies (T1): `pg@8.23.0` (dependencies), `node-pg-migrate@9.0.0`
+  (devDependencies), exact versions, both installs with
+  `--before=2026-09-28T00:00:00Z`; every newly added direct/transitive package published
+  no later than the cutoff; existing lock entries (Next.js, React, …) unchanged;
+  otherwise stop and report.
+- Allowed paths: `apps/web/package.json` (two deps + `db:migrate`/`test:db` scripts);
+  `apps/web/package-lock.json`; `apps/web/db/migrations/<timestamp>_initial-schema.sql`
+  (exactly one); `apps/web/db/tests/schema-constraints.test.mjs`; `README.md` (short
+  migration subsection under Local development stack); this file (checkpoint + handoff
+  status lines); `tasks.md` (1.3 checkbox only).
+- Excluded: `compose.yaml`; Dockerfiles; `.dockerignore`; `.gitignore`; `.env*`;
+  OpenSpec planning artifacts; governance files; tasks 1.4/1.5; UI/API/Auth/upload/AI/
+  Playwright; any operation on project `errlog-dev` or volume `errlog-dev_pgdata`
+  (including creating it).
+- Verification plan: temp compose project `errlog-v13-<UTC>` only; V0 read-only
+  preflight snapshot; V1 failing evidence; V2 install + lock/age checks + audit
+  baseline; V3 fresh `db:migrate`; V4 catalog vs plan; V5 second-up no-op + schema dumps
+  A=B=C (after db restart + normal web start); V6 `test:db` + post-test dump/rowcount; V7
+  node-pg-migrate probes P1–P6 (SQL loader, transaction, order check, lock, history,
+  config source) in a probe DB; V8 secret scan; V9 cleanup by exact name + label, no
+  `-v`, no prune, snapshots identical. Scripts/evidence live in the session temp dir only.
+- Work completed: checkpoint; V0–V9; migration
+  `apps/web/db/migrations/1791859549619_initial-schema.sql` (generated by
+  `node-pg-migrate create -j sql`, Down section removed); constraint test; package
+  scripts `db:migrate`/`test:db`; README "Database migrations" subsection; local gate +
+  scope gate.
+- V0 preflight (2026-10-13, read-only): `COMPOSE_PROJECT_NAME` unset; Compose v5.1.3;
+  temp project `errlog-v13-20261013024253` resolves to volume
+  `errlog-v13-20261013024253_pgdata`; `web` has no environment keys (only `db` has
+  `POSTGRES_PASSWORD`); `errlog-dev_pgdata` absent (never created).
+- V1 failing evidence: catalog check FAIL (8 tables + `pgmigrations` missing, exit 1);
+  `test:db` without `ERRLOG_SCHEMA_TEST_DATABASE_URL` → all tests fail on the guard
+  assertion (exit 1); `test:db` before migration → 1 pass / 10 fail (exit 1).
+- V2 install (T1): npm 10.8.2 on the host dropped the `libc` field of 20 existing
+  optional platform entries (version/resolved/integrity unchanged), so both files were
+  restored and the install was redone with the npm 11.19.0 of the project image
+  `node:24.21.0-bookworm-slim` (`--save-exact --ignore-scripts --before=2026-09-28T00:00:00Z`).
+  Result: lockfile v3; 0 existing entries changed or removed; 36 new packages, all
+  published before the cutoff (e.g. pg 8.23.0, pg-protocol 1.16.0,
+  pg-connection-string 2.14.0, pg-cloudflare 1.4.0, pg-pool 3.14.0, node-pg-migrate
+  9.0.0, yargs 18.0.0, jiti 2.7.0, glob 13.0.6); `npm ls --all` ok; dotenv not
+  installed; `npm audit`: 0 vulnerabilities (baseline only).
+- V3: temp `web` image build (`npm ci`, `next build` + TypeScript) ok; first
+  `npm run db:migrate` exit 0, history row `1791859549619_initial-schema`.
+- V4: catalog vs plan PASS — 8 tables, 27 named constraints, 6 indexes, columns/types/
+  nullability/defaults exact; FKs plain NO ACTION; extensions = [plpgsql]; no enum,
+  trigger, function, view or app sequence. Both CHECK trim sets are bytes
+  `20 09 0a 0d 0b 0c` (space, tab, LF, CR, VT, FF).
+- V5: second `db:migrate` → `No migrations to run!`, `pgmigrations` 1 row; schema-only
+  dumps A (after first up) = B (after second up) = C (after db restart + normal
+  `up --wait db web`, web HTTP 200, web env has no DB variable); pg_dump 18's random
+  `\restrict` lines excluded from the comparison.
+- V6: `test:db` 11/11 pass (display_name: 18 invalid values incl. empty, space/tab/LF/
+  CR/VT/FF-only and untrimmed rejected with the named CHECK, NULL rejected; internal
+  whitespace kept; duplicate names allowed; U+3000 boundary accepted and left to 5.7;
+  current_child, identity uniqueness, archive name/default, session/archive/question/
+  worksheet cross-User and cross-Child rejections); dump D = A (schema unchanged); the
+  test always ends in `ROLLBACK` by design (a row-count query showing 0 rows in all 8
+  tables was observed in the console but not saved under `ev/`).
+- V7 node-pg-migrate 9.0.0 observed (probe DBs inside T, dropped afterwards): P1 the
+  `-- Up Migration` SQL file is loaded and run; P5 history table `pgmigrations(id
+  integer, name varchar, run_on timestamp)`; `down` on an Up-only SQL file exits 1 with tables and history unchanged (the
+  saved log kept only stack frames; the 9.0.0 SQL loader maps a missing Down section
+  to `down: false`, which throws "User has disabled down migration on file"); P2 a failing second
+  pending migration rolls back the first too (no tables, no history rows); P3 an
+  earlier-numbered file after a later one is applied → "Not run migration … is
+  preceding already run migration …", exit 1, nothing applied; P4 two concurrent `up`
+  → one applies, the other fails immediately ("Another migration is already running.
+  Advisory lock mode is set to 'fail'"), one history row; P6 no `.env`/config file
+  used, without `DATABASE_URL` the CLI refuses. Mutation check: a variant with
+  `btrim(display_name)` (spaces only) and a non-composite error_question FK makes
+  `test:db` fail exactly those 2 tests.
+- V8: the temporary password is absent from all evidence, scripts, repo files and this
+  checkpoint; no credentialed connection string in any of them.
+- V9: `down` (no `-v`); `errlog-v13-20261013024253_pgdata` volume and
+  `errlog-v13-20261013024253-web:latest` image removed by exact name after verifying
+  label `com.docker.compose.project`; no pdf-processing image was built; no T
+  containers/networks/volumes remain; before/after snapshots identical;
+  `errlog-dev_pgdata` still absent; temporary password file deleted.
+- Local gate: `openspec validate --strict` valid; safe-commit tests 27/27. Scope gate:
+  modified `README.md`, `apps/web/package.json`, `apps/web/package-lock.json`
+  (additions only), this file; new `apps/web/db/migrations/1791859549619_initial-schema.sql`,
+  `apps/web/db/tests/schema-constraints.test.mjs`.
+- Evidence (session temp dir, not committed): `check_catalog.py`, `catalog.sql`,
+  `probes.sh`, `ev/` (catalog JSON, dumps A–D, migrate/test/probe logs, lock report,
+  before/after snapshots).
+- After checking 1.3 (2026-10-13): `openspec validate --strict` valid; progress 3/89;
+  the `tasks.md` diff is only the 1.3 checkbox.
 - Work remaining: safe-commit `check` → user approval → `commit` → separate push
   approval → `push`.
 - Tests not yet run: none for this stage.
 - Reviewer findings, round 1 (fresh read-only reviewer): verdict PASS, no blocking.
-  Non-blocking: (N1) checkpoint said "50/50" dynamic checks; `ev/run.log` has 47 —
-  fixed to 47/47. (N2) README named `errlog-dev_pgdata` without noting that
-  `COMPOSE_PROJECT_NAME` overrides the project name — caveat added. (N3) the db
-  container replacement step alone would not catch an anonymous volume (Compose
-  carries those over on recreate); the exact-mount assertion and the sentinel
-  surviving `down`/`up` are what prove persistence; failing evidence is static only;
-  `verify.sh` has no trap — accepted, not changed. (N4) default-project static check
-  had no saved file — wording clarified. (N5) cleanup scope confirmed correct.
-- Reviewer findings, round 2 (re-review of N1/N2/N4 fixes): verdict PASS, no
-  blocking. Optional, not applied: `compose.yaml` header comment lacks the
-  `COMPOSE_PROJECT_NAME` caveat (it already says "under the default project name");
-  uneven line wrapping in this checkpoint.
-- After checking 1.2 (2026-10-12): `openspec validate --strict` valid; progress 2/89;
-  scope = 5 modified allowed files (`README.md`, `compose.yaml`, `ssdf-profile.md`,
-  this file, `tasks.md`); the `tasks.md` diff is only the 1.2 checkbox.
-- Files expected in worktree: modified `compose.yaml`, `README.md`,
-  `docs/security/ssdf-profile.md`, this file, `tasks.md` (1.2 checked).
+  Fixed: (N1) V6 rollback wording no longer claims saved row-count evidence; (N2) V7
+  `down` wording matches what the saved log shows; (N8) README now suggests
+  `unset DATABASE_URL`. Recorded, not changed: (N3) carried forward below for 5.7;
+  (N4) `worksheet_archive.name` is stored as entered (spec defines no normalization);
+  (N5) the test pins the exact table list and "no enum/trigger" and must be updated by
+  later migrations; (N6) a failure outside `rejects()` cascades to later tests (fails
+  safe); (N7) `db:migrate` in the `web` image relies on the single-stage Dockerfile's
+  full `npm ci` (devDependencies) — revisit for 1.5/deployment; (N9) lock mode `fail`
+  and PG18 auto-named NOT NULL constraints are as intended.
+- Carry-forward for task 5.7/5.9 (from N3): the application whitespace rule must trim
+  at least space, tab, LF, CR, VT and FF (JS `String.prototype.trim()` does), otherwise
+  values the app accepts would hit `child_display_name_normalized_check` (23514).
+- Files expected in worktree: the six files listed under Scope gate plus `tasks.md`
+  (1.3 checked).
 - Blockers: none.
-- Next action: run safe-commit `check` for S1.2 (5 files) and wait for user approval
+- Next action: run safe-commit `check` for S1.3 (7 files) and wait for user approval
   of the plan.
 
 Last updated: 2026-10-10. Checkpoint:
