@@ -130,3 +130,27 @@ state — never from chat history, `resume`, context, or model memory.
   `unknown` must never be treated as `passed`.
 
 Full recovery protocol: see `docs/implementation-workflow.md`.
+
+## Cross-agent review handoff
+
+Optional, only when the user asks for a cross-agent (e.g. Codex) review. It sits after the
+local gate and the Claude stage reviewer PASS, and before checking `tasks.md`, setting
+`ready_for_safe_commit`, or running safe-commit `check`. Full protocol:
+`docs/implementation-workflow.md` ("Cross-agent review handoff").
+
+- Publish a review request only with `node tools/stage-handoff.mjs publish …`, then stop.
+  Never invoke Codex or any other agent yourself, and never write a response yourself.
+- Files under `.agent-handoffs/` (Git-ignored) are immutable: never edit, overwrite,
+  rename, or delete them, or interrupted-write leftovers, unless the user explicitly asks.
+  A targeted fix or a replaced safe-commit plan needs a new request revision.
+- When the user says to read the current Codex response, run `verify` first. Use the
+  response only if `verify` reports `valid`; otherwise report `handoff unavailable or
+  invalid — perform direct repository review` and do not use it. Continue the workflow
+  only on a Codex `PASS`; on `FAIL` or `BLOCKED`, stop and report.
+- A handoff is a redacted review snapshot, not a source of truth. It never changes the
+  checkpoint, tasks, or session recovery, never blocks a stage, and never authorizes a
+  fix, commit, push, merge, or deployment. A fix for a Codex finding needs the user's
+  instruction and shares the two-round targeted-fix limit with the Claude reviewer.
+- Never put secrets, connection strings, environment dumps, real emails or phone
+  numbers, photo/PDF content, or raw terminal output in a handoff; commands only in
+  redacted form.

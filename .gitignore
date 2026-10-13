@@ -15,3 +15,6 @@ next-env.d.ts
 *.tsbuildinfo
 .env*
 __pycache__/
+
+# Cross-agent review handoffs (tools/stage-handoff.mjs); local only, never committed.
+.agent-handoffs/

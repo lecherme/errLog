@@ -52,6 +52,10 @@ A Stage Contract is an execution boundary for the current batch of work, not a n
 
 Milestone convergence review follows a Group or key end-to-end flow (not every stage).
 
+Optional cross-agent review, only when the user asks: after step 14 (or step 15's
+re-review) passes and before step 16, publish a review request and stop; continue to
+step 16 only after a verified Codex `PASS` (see Cross-agent review handoff).
+
 ## Hard rules
 
 - OpenSpec is the only source of truth; the `tasks.md` checkbox is the only completion
@@ -399,12 +403,17 @@ proposal/spec/design/tasks/code/tests still agree; no retired mechanism lingers;
 checked task checkbox has real evidence; facts discovered during implementation have
 been written back to OpenSpec; security/privacy boundaries still hold.
 
+A cross-agent (Codex) review is an optional supplement requested by the user. It never
+replaces or satisfies the stage reviewer (see Cross-agent review handoff).
+
 ## Session continuity and recovery
 
 **Sources of truth**: OpenSpec task checkboxes (completion); Git commits (durable stage
 boundaries); the current change's `scratchpad.md` Implementation Checkpoint (recovery
 notes for the single in-progress stage, not a second task-status system); the
 uncommitted worktree (possibly in-progress, never proof of completion by itself).
+Cross-agent review handoffs under `.agent-handoffs/` are not a source of truth; recovery
+neither reads nor depends on them.
 
 **Implementation Checkpoint** lives in `openspec/changes/<change>/scratchpad.md` as one
 bounded section covering only the current stage: stage ID; OpenSpec task IDs; Stage
@@ -515,3 +524,193 @@ before continuing.
 
 Prefer finishing one Stage Contract within a single session; start the next stage only
 after the current one is safe-committed.
+
+## Cross-agent review handoff
+
+A two-way, file-based handoff that lets another reviewer (Codex) review a stage without
+the conversation: Claude publishes an immutable review request, the user has Codex write
+an immutable response bound to that request, and the user tells Claude to read it. No
+agent ever invokes another; the user carries every step.
+
+**Authority**: a handoff is a redacted snapshot of review input and output, not a source
+of truth. It never changes the Implementation Checkpoint (no extra fields), `scratchpad.md`,
+`tasks.md`, code, or Git; recovery never reads it; and a missing, broken, or stale
+handoff never blocks a stage. It authorizes nothing: no fix, commit, push, merge, or
+deployment. The checkpoint, Git, the worktree, test evidence, and safe-commit stay
+authoritative. Whenever a handoff can't be used, report `handoff unavailable or invalid
+— perform direct repository review`.
+
+### Layout
+
+    .agent-handoffs/<stage-id>/runs/<run-id>/index.json
+    .agent-handoffs/<stage-id>/runs/<run-id>/requests/NNNN-review-ready.json
+    .agent-handoffs/<stage-id>/runs/<run-id>/responses/NNNN-codex-review.json
+
+`.agent-handoffs/` is in the root `.gitignore`; the tool refuses to write unless Git
+ignores it and nothing under it is tracked. `<stage-id>` is the Stage Contract ID
+(matching `^[A-Z][A-Za-z0-9.-]{0,15}$`). `<run-id>` is `<UTC yyyymmddThhmmssZ>-<8 hex>`;
+the active run is the greatest run ID. Requests and responses are read-only (0444) and
+are never edited, overwritten, renamed, or deleted. `index.json` names the current
+request; only `publish` changes it. Response `NNNN` answers request `NNNN`, one to one.
+
+### When to publish
+
+Only when the user asks for a cross-agent review. The normal point is after the local
+gate and the Claude stage reviewer PASS, before step 16, so the request's `safeCommit` is
+`null`. Each request is the next revision, with a `reason`:
+
+- `initial`: revision 1, and only revision 1;
+- `targeted_fix`: after a targeted fix that needs re-review;
+- `plan_refresh`: only when the user asks for a review after safe-commit `check`, or the
+  plan itself needs review, and the plan named in the current request expired, went
+  stale, or was rebuilt. There is no routine re-review after `check`;
+- `manual_refresh`: the user asks for a fresh snapshot.
+
+Nothing else is recorded: stage start, reviewer rounds, fixes, plan expiry, commit, push,
+and abandonment stay with the checkpoint, Git, safe-commit, and the stage report.
+
+### Commands
+
+`tools/stage-handoff.mjs` uses only Node built-ins and runs only read-only Git commands
+(`rev-parse`, `status`, `rev-list`, `check-ignore`, `ls-files`) plus the read-only
+`safe-commit inspect` when a request names a plan. Every command prints one
+JSON object; exit code 0 means success or `valid`, 1 refused or not valid, 2 usage error.
+
+- `node tools/stage-handoff.mjs init --stage <id> [--new-run] --json` creates a run with
+  `currentRevision: 0`. It refuses if the stage already has a run, unless `--new-run`
+  is given; the new run records `priorRunId` and old runs are left untouched.
+- `node tools/stage-handoff.mjs publish --stage <id> --input <draft.json> --json` (Claude)
+  publishes the next request revision. A named plan must be `ready` and unexpired.
+- `node tools/stage-handoff.mjs respond --stage <id> --revision <n> --input <draft.json> --json`
+  (Codex) writes the response to request `n`, which must be the current one.
+- `node tools/stage-handoff.mjs verify --stage <id> [--revision <n>] --json` checks the
+  handoff read-only and repairs nothing.
+
+Drafts live outside the repository (for example the agent's own temporary directory).
+Both drafts must have exactly the fields listed below, as single-line strings of at most
+500 characters (summaries 300) and lists of at most 50 items.
+
+### Request
+
+Claude's draft supplies `reason`, `contract` (`summary`, `taskIds`, `allowedFiles`),
+`checkpoint` (`path` and a `summary` of `stageId`, `stageState`, `progress`; or `null`
+when the stage has no checkpoint), `verification[]` (`name`, `redactedCommand`,
+`exitCode`, `result`, `conciseSummary`), `claudeReview` (`reviewerType`, `round`,
+`verdict`, `blockingFindings`, `nonBlockingFindings`, `fixesApplied`),
+`contractDeviations[]` (`description`, `userApproved`), `safeCommitPlanId` (or `null`),
+and `nextAction`. The tool adds the rest:
+
+- `schemaVersion`, `kind: "review-request"`, `stageId`, `runId`, `revision`,
+  `generatedAt`;
+- `previousRequest`: `path` and SHA-256 of the previous request file (`null` for
+  revision 1);
+- `repo`: `branch`, `upstream`, `baselineHead` (HEAD at `init`), `currentHead`;
+- `changes`: `changedFilesDigest` and `files[]` (`path`, `status`, `sha256`, `inScope`);
+- `checkpoint.sha256` (the checkpoint file's hash), or `{path: null, sha256: null,
+  summary: "not-applicable"}`;
+- `safeCommit`: `planId`, `state`, `expiresAt`, `files`, `ignoredFiles` from
+  `safe-commit inspect`, or `null`;
+- `worktree`: `clean`, `ahead`, `behind`.
+
+A changed path outside `allowedFiles` is published with `inScope: false` and reported by
+`verify` as `OUT_OF_SCOPE_CHANGES`; the reviewer and the scope gate must report it.
+
+### Response
+
+Codex's draft supplies `verdict` (`PASS`, `FAIL`, or `BLOCKED`), `blockingFindings`,
+`nonBlockingFindings`, `checksPerformed`, `limitations`, and `nextAction`. The tool adds
+`schemaVersion`, `kind: "review-response"`, `reviewer: "codex"`, `generatedAt`, and
+`source`: the request's `stageId`, `runId`, `revision`, `requestPath`, `requestSha256`,
+`changedFilesDigest`, and `currentHead`. `respond` refuses a request that is not current,
+already answered, or stale.
+
+### Changed-files manifest
+
+The manifest covers every path that `git status --porcelain=v1 -z --untracked-files=all
+--no-renames` lists (ignored files excluded), as bytes:
+
+    errlog-changed-files-manifest/v1 NUL
+    then, per path:  <XY> NUL <content> NUL <path bytes> NUL
+
+`<XY>` is the porcelain status. `<content>` is `sha256:<hex>` of the file bytes,
+`symlink:<hex>` of a symlink's target text, or `deleted`. Entries are sorted by path,
+comparing raw UTF-8 bytes. POSIX paths can't contain NUL, so paths with spaces, tabs,
+newlines, or quotes are unambiguous. `changedFilesDigest` is `sha256:` plus the SHA-256 of
+these bytes. `changes.files[]` holds exactly these entries (`sha256` is `<content>`), so
+the digest can be rebuilt from the request alone and from the worktree, and both must
+agree.
+
+### Writes and interruptions
+
+`publish` and `respond` hold a lock (`<run>/.lock`, created with `mkdir`) and first
+require the existing handoff to verify structurally. A record is scanned for sensitive
+data, written to a temporary file, flushed, read back, and then published with a hard link
+that fails rather than replace an existing name; it is then set read-only and the
+directory is flushed. `publish` updates `index.json` only after its request is fully
+published, through a temporary file and an atomic rename. `respond` never touches the
+index. A refused or failed write leaves the earlier index, requests, and responses
+byte-for-byte unchanged. An interrupted write can leave a temporary file, a lock, or a
+request newer than the index; `verify` reports these as `stale` and the tools refuse to
+write until they are gone. Only the user removes them, or an agent the user explicitly
+asks to.
+
+### Verify
+
+`verify` reports `status`:
+
+- `valid`;
+- `stale`: an interrupted-write leftover, or the repository has moved on
+  (`HEAD_CHANGED`, `DIGEST_CHANGED`, `CHECKPOINT_CHANGED`, `PLAN_EXPIRED`,
+  `PLAN_CONSUMED`, `PLAN_MISSING`, or `NOT_CURRENT_REVISION`);
+- `invalid`: a broken index, a hash or chain mismatch, a response not bound to its
+  request, or an unignored directory;
+- `unavailable`: no handoff, or no request yet.
+
+It checks the index, every request back to revision 1 (contiguous revisions, each
+`previousRequest` hash, the current hash in the index, each digest against its
+`files[]`), the response binding, and then compares the current request with HEAD, the
+worktree digest, the checkpoint hash, and the safe-commit plan. The output also gives
+`request` (`path`, `sha256`, `intact`), `response` (`present`, `verdict`, `bindingOk`),
+`plan`, `reasons`, and `notices`.
+
+### Using a response (Claude)
+
+When the user says to read the current Codex response, run `verify` first. Read the
+response only if `status` is `valid` and `response.present` is true; anything else is not
+usable. Report the verdict and findings to the user. On `PASS`, continue the workflow
+(step 16 onward, after a final scope gate). On `FAIL` or `BLOCKED`, stop. A fix needs the
+user's instruction and shares the two-round targeted-fix limit with the Claude stage
+reviewer; after it, publish a `targeted_fix` revision for the next review.
+
+### Instructions for Codex
+
+Run `verify` and continue only if the current request is `valid`. Review the actual
+repository (the diff against `repo.currentHead` and the changed files), not just the
+request's claims. Never modify code, Git, the index, the request, or the checkpoint.
+Write the draft outside the repository, then run `respond` for the current revision.
+
+### Safety
+
+Never store passwords, API tokens, OTPs, cookies, Authorization headers, SSH or private
+keys, database connection strings, environment dumps, real email addresses or phone
+numbers, photo or PDF content, unfiltered terminal output, or other user data. Commands
+are stored only in redacted form, with secrets replaced by `<redacted>`; write any
+database URL as `postgres://<redacted>`. Before writing, the tool scans the full record
+and refuses (`SENSITIVE_DATA`, naming the rules and top-level fields but never the
+matched text), leaving everything unchanged, on any of: a URL with a password other than
+`<redacted>`; a database URL (`postgres`, `postgresql`, `mysql`, `mariadb`, `mongodb`,
+`redis`) not starting with `<redacted>`; `authorization:`; `bearer` and a token; a
+private-key header; `password`, `passwd`, `secret`, `token`, `api_key`, `cookie`, or
+`otp` followed by `:` or `=` and a value other than `<redacted>`; AWS, GitHub, Google,
+Slack, JWT, or `sk-` key formats; an email address outside `example.test`, `example.com`,
+and `example.invalid`; a mainland mobile number (optionally `+86` or dash-separated); or
+three or more `NAME=value` assignments. Wording such as `token: …` or `OTP: …` in review
+text also trips the scan; rephrase it. `verify` applies the same scan and the response
+field checks to stored records, so a hand-written record is reported `invalid`. Only
+changed files' hashes are stored, never their contents. The scan is a safety net; the
+writer remains responsible for redaction.
+
+### Retention
+
+Handoffs are local working data, not an audit system. They are never deleted
+automatically, only when the user explicitly asks.
