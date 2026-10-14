@@ -162,7 +162,7 @@ This is a working document, not a spec artifact.
 - Next action: run safe-commit `check` for S1.3 (7 files) and wait for user approval
   of the plan.
 
-Last updated: 2026-10-10. Checkpoint:
+Last updated: 2026-10-14. Checkpoint:
 - P1(1): Consistent — landed, `openspec validate --strict` passed.
 - P1(2): Consistent — landed, `openspec validate --strict` passed.
 - P1(3): Consistent — landed, `openspec validate --strict` passed.
@@ -189,6 +189,9 @@ Last updated: 2026-10-10. Checkpoint:
   `tasks.md` 1.5/4.1/4.7/7.7/13.2/13.4/13.6 updated; `CLAUDE.md` and
   `docs/implementation-workflow.md` gained the user-journey E2E rules; no proposal/spec
   change; task total 89 unchanged; `openspec validate --strict` passed.
+- P1(15): **Consistent** — landed 2026-10-14; `tasks.md` 1.4 rewritten (local-dev fixture
+  data precondition) and 2.5 gained a positive caller-context verify clause; no
+  proposal/design/spec change; 3/89 unchanged; `openspec validate --strict` passed.
 
 ### Status Legend
 - **Open**: Not yet captured consistently in OpenSpec artifacts
@@ -547,6 +550,19 @@ Source: `/opsx:explore` read-only interview in this project's conversation histo
 - **Suggested fix**: as landed — new child-profile Requirement "孩子档案显示名称" with three Scenarios (blank/whitespace-only rejected; normalized name shown in list/current/switch; duplicate names allowed, switching by id); D4 diagram line `Child.displayName` nested under `Child[]` plus a "孩子档案显示名称" paragraph with rationale and rejected alternatives (does not equate the semantics to any specific SQL expression); 5.7/5.9 wording and verify clauses (ordinary spaces, tab/newline, normalized value saved and displayed, duplicate names distinct).
 - **User decision needed?**: No — decided by the user 2026-10-12: persist the normalized (trimmed) value, not raw input; a dedicated Requirement with three Scenarios; task 1.4 unchanged (its Stage Contract supplies a synthetic non-empty displayName); duplicate names allowed, UUID for identity/switching/ownership; no rename/delete/avatar/birthday/other profile management in MVP; DB uses text + a non-blank defensive constraint, no max length.
 - **Notes**: found and landed 2026-10-12. proposal unchanged (its "检查/创建孩子档案……支持新建/切换" already covers the capability); other five specs unchanged; tasks 1.3/1.4/5.8 text unchanged; no checkbox changed (89 tasks, 2 checked). No implementation, checkpoint, or dependency change.
+
+#### P1(15): task 1.4 acceptance claims workflow proof that only 2.5/4.1 can supply
+- **Status**: Consistent
+- **Files & locations**:
+  - `tasks.md` — 1.4 (whole task); 2.5 (verify clause)
+  - consistent and unchanged: `tasks.md` Group 4 intro, 4.1 ("Identity uses 1.4's dev identity as an explicitly labeled pre-journey precondition, not login E2E"), 5.4, 13.4, 1.5(g); `design.md` D22 "驱动与断言" and Migration Plan item 3
+- **Evidence**: 1.4 read "inserting one allowlisted User/Identity/Child row for manual end-to-end testing … verify the seeded identity can be used to drive the workflow manually ahead of real Auth (Group 5) being built". When 1.4 runs no workflow, route, or caller context exists, so the clause could only be met by a direct SQL substitute (Codex S1.4 contract review revision 1, B1). "manual end-to-end testing" conflicts with D22/`CLAUDE.md` (manual walkthroughs are never product E2E). "allowlisted" has no referent: no allowlist or OTP mechanism exists before Group 5 (5.4, Migration Plan). 2.5 verified only rejections, so no task proved that the seeded identity works as a caller context.
+- **Expected state**: 1.4 creates and verifies a local-dev fixture data precondition only (one synthetic User/Identity/Child with a valid `currentChildId`; idempotent; ownership constraints satisfied; synthetic, no real credential); its Identity is a dev fixture, not an allowlist entry, login path, or production auth path. 2.5 owns the first caller-context/ownership access proof, including the positive case; 4.1 owns the first browser user journey.
+- **Impact**: S1.4 could not satisfy its own acceptance without overlapping 2.5 or faking workflow proof; the positive caller-context case was owned by no task.
+- **Recommended artifact**: `tasks.md` (1.4, 2.5).
+- **Suggested fix**: as landed — 1.4 rewritten as the local-dev fixture data precondition with verify (a)–(d) and an explicit hand-off to 2.5/4.1; 2.5 verify gains "a request carrying the 1.4 seeded identity's caller context for an asset that identity owns is issued a signed URL (the first proof that the seeded identity works as a caller context)", keeping both rejection checks.
+- **User decision needed?**: No — decided by the user 2026-10-14: 1.4 only creates and verifies the seed data precondition; 2.5 owns the first caller-context/ownership proof (option A: add the positive case); 4.1 owns the first browser journey; the seeded Identity is a local dev fixture / preconfigured dev entry, never called a real allowlist.
+- **Notes**: found 2026-10-14 by Codex S1.4 contract review revision 1 (B1, N1); landed 2026-10-14. proposal/design/specs unchanged; other tasks unchanged; no checkbox changed (89 tasks, 3 checked). Observation, not fixed here: no task names allowlist storage/checks explicitly (implied by 5.4) — revisit when refining Group 5. The stale S1.3 handoff/checkpoint block at the top of this file is left for the S1.4 Stage Contract. No implementation, checkpoint, or dependency change.
 
 #### P2(1): design D5 and D6 lack the explicit rationale / alternatives subsection that D1–D2 and D7–D13 carry
 - **Status**: Consistent
