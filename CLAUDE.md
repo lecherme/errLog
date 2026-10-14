@@ -69,7 +69,8 @@ The OpenSpec task checkbox is the only authoritative record of task completion.
 
 - Work one small batch of related OpenSpec tasks at a time. Never have more than one
   open Stage Contract.
-- Before editing any code, present a Stage Contract and obtain explicit approval.
+- Before editing any code, present a Stage Contract, pass it through the contract
+  handoff (see Cross-agent review handoff), and obtain explicit approval.
   A Stage Contract states: stage ID; OpenSpec task IDs; expected outcome; the
   requirement/scenario/design it traces to; dependencies; sub-steps; the exact paths
   allowed to change; what is explicitly excluded; test requirements; contract-test
@@ -133,24 +134,40 @@ Full recovery protocol: see `docs/implementation-workflow.md`.
 
 ## Cross-agent review handoff
 
-Optional, only when the user asks for a cross-agent (e.g. Codex) review. It sits after the
-local gate and the Claude stage reviewer PASS, and before checking `tasks.md`, setting
-`ready_for_safe_commit`, or running safe-commit `check`. Full protocol:
+A Codex cross review is a default gate of every stage; the user does not have to ask for
+it. `tools/stage-handoff.mjs` keeps two separate channels, `contract` and
+`implementation`; always pass `--channel`. Full protocol:
 `docs/implementation-workflow.md` ("Cross-agent review handoff").
 
-- Publish a review request only with `node tools/stage-handoff.mjs publish …`, then stop.
-  Never invoke Codex or any other agent yourself, and never write a response yourself.
+- Every Stage Contract goes through a contract handoff before the user approves it:
+  publish the full contract with `--channel contract`. Until the user approves, write no
+  Implementation Checkpoint, edit no product file, and start no implementation.
+- Every completed implementation stage goes through an implementation handoff
+  (`--channel implementation`) after the local gate and the Claude stage reviewer PASS,
+  and before the task checkbox, `ready_for_safe_commit`, or safe-commit `check`. The
+  request binds the checkpoint, which holds the user-approved Stage Contract.
+- After publishing any request, stop and wait for the user to have Codex review it.
+  Never invoke Codex or any other agent yourself, and never write or forge a response.
+- Run `verify` before reading any response, and use a response only when `verify`
+  reports `valid`.
+- A contract `OK` is not approval: still wait for the user's explicit approval of the
+  Stage Contract. Any change to the contract, including one the user asks for after `OK`,
+  needs a new revision and a new `OK`.
+- Only an implementation `PASS` lets the stage continue to the task checkbox and
+  safe-commit `check`.
+- On `NEEDS_CHANGES`, `FAIL`, or `BLOCKED`, stop and report. A contract change or a fix
+  needs the user's authorization and a new immutable revision; the same blocking finding
+  gets at most two fix rounds.
+- If a handoff is `unavailable`, `invalid`, or `stale`, stop and report it; never skip
+  the cross review silently. The user decides whether to republish, switch to a direct
+  repository review, or waive it explicitly.
+- A handoff authorizes nothing: no implementation, fix, commit, push, merge, or
+  deployment. Commit and push each still need their own user approval.
+- A handoff is a redacted transport snapshot, not a source of truth. A new session
+  recovers from the repository and the checkpoint, never from a handoff or chat memory;
+  it may resume a pending contract handoff only as the workflow document describes.
 - Files under `.agent-handoffs/` (Git-ignored) are immutable: never edit, overwrite,
   rename, or delete them, or interrupted-write leftovers, unless the user explicitly asks.
-  A targeted fix or a replaced safe-commit plan needs a new request revision.
-- When the user says to read the current Codex response, run `verify` first. Use the
-  response only if `verify` reports `valid`; otherwise report `handoff unavailable or
-  invalid — perform direct repository review` and do not use it. Continue the workflow
-  only on a Codex `PASS`; on `FAIL` or `BLOCKED`, stop and report.
-- A handoff is a redacted review snapshot, not a source of truth. It never changes the
-  checkpoint, tasks, or session recovery, never blocks a stage, and never authorizes a
-  fix, commit, push, merge, or deployment. A fix for a Codex finding needs the user's
-  instruction and shares the two-round targeted-fix limit with the Claude reviewer.
 - Never put secrets, connection strings, environment dumps, real emails or phone
   numbers, photo/PDF content, or raw terminal output in a handoff; commands only in
   redacted form.

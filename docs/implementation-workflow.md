@@ -14,8 +14,13 @@ A Stage Contract is an execution boundary for the current batch of work, not a n
    related tasks; confirm dependencies and the current baseline (code, tests, prior
    stages).
 3. Draft a Stage Contract (template below), including User-journey E2E requirements.
-4. Obtain user approval — no edits before this.
-5. Write the Implementation Checkpoint with `stageState: in_progress`.
+   3a. Contract review handoff: publish the full contract to the `contract` channel and
+   stop. Continue only after a verified Codex `OK`, then present that exact contract to
+   the user (see Cross-agent review handoff).
+4. Obtain the user's explicit approval of that contract — no checkpoint and no edits
+   before this. Any change to it goes back to step 3a as a new revision.
+5. Write the Implementation Checkpoint with `stageState: in_progress`, holding the full
+   approved Stage Contract.
 6. Where applicable: failing evidence first; unit, integration, contract tests, AI eval.
 7. Implement product code strictly within the Stage Contract's allowed paths.
 8. E2E worker (see User-journey E2E) writes/updates tests within worker allowed paths.
@@ -36,7 +41,10 @@ A Stage Contract is an execution boundary for the current batch of work, not a n
 15. Blocking findings: targeted fix → re-run the affected tests (E2E via the worker) and
     the full local gate → re-review. At most two reviewer fix rounds; unresolved
     blocking findings stop the stage.
-16. Reviewer PASS and every gate PASS → check the corresponding `tasks.md` checkbox(es).
+    15a. Implementation review handoff: publish the stage to the `implementation`
+    channel and stop. Continue only after a verified Codex `PASS`.
+16. Reviewer PASS, Codex `PASS`, and every gate PASS → check the corresponding `tasks.md`
+    checkbox(es).
 17. After checking: re-run `openspec validate "<change>" --strict`, the progress count,
     and the final scope/worktree check.
 18. Update the checkpoint to `stageState: ready_for_safe_commit`. Never set this before
@@ -52,9 +60,8 @@ A Stage Contract is an execution boundary for the current batch of work, not a n
 
 Milestone convergence review follows a Group or key end-to-end flow (not every stage).
 
-Optional cross-agent review, only when the user asks: after step 14 (or step 15's
-re-review) passes and before step 16, publish a review request and stop; continue to
-step 16 only after a verified Codex `PASS` (see Cross-agent review handoff).
+Both cross reviews (3a and 15a) are default gates; the user does not have to ask for
+them. Only the user can waive one, explicitly (see Cross-agent review handoff).
 
 ## Hard rules
 
@@ -403,8 +410,8 @@ proposal/spec/design/tasks/code/tests still agree; no retired mechanism lingers;
 checked task checkbox has real evidence; facts discovered during implementation have
 been written back to OpenSpec; security/privacy boundaries still hold.
 
-A cross-agent (Codex) review is an optional supplement requested by the user. It never
-replaces or satisfies the stage reviewer (see Cross-agent review handoff).
+The cross-agent (Codex) reviews are default gates in addition to the stage reviewer; they
+never replace or satisfy it (see Cross-agent review handoff).
 
 ## Session continuity and recovery
 
@@ -413,11 +420,12 @@ boundaries); the current change's `scratchpad.md` Implementation Checkpoint (rec
 notes for the single in-progress stage, not a second task-status system); the
 uncommitted worktree (possibly in-progress, never proof of completion by itself).
 Cross-agent review handoffs under `.agent-handoffs/` are not a source of truth; recovery
-neither reads nor depends on them.
+never depends on them. The one exception is resuming a pending contract handoff (see
+"Pending contract handoff" below), which is still a non-authoritative snapshot.
 
 **Implementation Checkpoint** lives in `openspec/changes/<change>/scratchpad.md` as one
-bounded section covering only the current stage: stage ID; OpenSpec task IDs; Stage
-Contract summary; user-approval status; exact paths allowed to change; work completed;
+bounded section covering only the current stage: stage ID; OpenSpec task IDs; the full
+user-approved Stage Contract (the formal execution boundary); user-approval status; exact paths allowed to change; work completed;
 work remaining; tests run and their results; tests not yet run; reviewer findings and
 their resolution; files expected to exist in the worktree; blockers; the single next
 action; `stageState` (e.g. `in_progress` / `ready_for_safe_commit`); last-updated
@@ -471,6 +479,16 @@ as reading OpenSpec's apply instructions read-only and proposing the first Stage
 Contract — never creating an active checkpoint or editing implementation files before
 that Stage Contract is approved.
 
+**Pending contract handoff**: before the user approves a Stage Contract, the draft exists
+only in its contract handoff, since no checkpoint is written yet. A new session may
+resume it, without redrafting or creating a run, only if `verify --channel contract`
+reports `valid` (so HEAD, `inputsDigest`, and `changedFilesDigest` are unchanged) and
+`nextGate` is `awaiting_codex_response` or `awaiting_user_approval`. Report the stage,
+channel, run, revision, verify status, and next action, then stop and wait for the user.
+If the handoff is `unavailable`, `invalid`, or `stale`, its origin is unclear, or the user
+asks for a new draft, stop and let the user decide whether to republish; never continue
+silently and never create a new run on your own.
+
 Conversely, if the checkpoint is missing but any task is already checked, implementation
 code exists, the worktree has changes not explained by this baseline, or the branch/Git
 state can't be clearly explained, treat it as potential drift per the inconsistency rule
@@ -509,7 +527,8 @@ baseline.
 9. Separate expected changes from changes whose origin can't be confirmed.
 10. Report to the user: what the prior stage completed; what's still incomplete; which
     worktree changes are expected vs. unexpected; whether checkpoint/Git/OpenSpec agree;
-    the remote CI status from step 8 if applicable; what's about to happen next.
+    the remote CI status from step 8 if applicable; any pending contract handoff (see
+    "Pending contract handoff"); what's about to happen next.
 11. Only continue editing after the user confirms.
 
 **On any inconsistency** between checkpoint, worktree, Git, and task checkboxes: stop
@@ -532,32 +551,110 @@ the conversation: Claude publishes an immutable review request, the user has Cod
 an immutable response bound to that request, and the user tells Claude to read it. No
 agent ever invokes another; the user carries every step.
 
-**Authority**: a handoff is a redacted snapshot of review input and output, not a source
-of truth. It never changes the Implementation Checkpoint (no extra fields), `scratchpad.md`,
-`tasks.md`, code, or Git; recovery never reads it; and a missing, broken, or stale
-handoff never blocks a stage. It authorizes nothing: no fix, commit, push, merge, or
-deployment. The checkpoint, Git, the worktree, test evidence, and safe-commit stay
-authoritative. Whenever a handoff can't be used, report `handoff unavailable or invalid
-— perform direct repository review`.
+There are two channels, and each is a default gate of every stage:
+
+- **contract**: reviews a Stage Contract draft after Claude drafts it and before the
+  user approves it (Flow step 3a). Verdicts: `OK`, `NEEDS_CHANGES`, `BLOCKED`.
+- **implementation**: reviews a finished stage after the local gate and the Claude stage
+  reviewer PASS, before the task checkbox (Flow step 15a). Verdicts: `PASS`, `FAIL`,
+  `BLOCKED`.
+
+**Authority**: a handoff is a redacted transport and review snapshot. It is not a source
+of truth, a checkpoint, a task system, or an audit log. It never changes the
+Implementation Checkpoint (no extra fields), `scratchpad.md`, `tasks.md`, code, or Git,
+and it authorizes nothing: no implementation, fix, commit, push, merge, or deployment.
+Commit and push each keep their own user approval. The checkpoint, Git, the worktree,
+test evidence, and safe-commit stay authoritative. The user-approved Stage Contract
+lives in the checkpoint; if a contract handoff and the checkpoint disagree, the
+checkpoint wins, but Claude reports the drift and stops instead of guessing.
+
+**Gate behavior**: a handoff that is `unavailable`, `invalid`, or `stale` stops the
+workflow at that gate. Claude reports it (with the message `handoff unavailable or
+invalid — perform direct repository review`) and never skips the cross review silently.
+The user decides: republish, switch to a direct repository review, or waive this review
+explicitly. Only the user can waive a cross review.
 
 ### Layout
 
-    .agent-handoffs/<stage-id>/runs/<run-id>/index.json
+    .agent-handoffs/<stage-id>/runs/<run-id>/index.json                                     implementation
     .agent-handoffs/<stage-id>/runs/<run-id>/requests/NNNN-review-ready.json
     .agent-handoffs/<stage-id>/runs/<run-id>/responses/NNNN-codex-review.json
+    .agent-handoffs/<stage-id>/contract/runs/<run-id>/index.json                            contract
+    .agent-handoffs/<stage-id>/contract/runs/<run-id>/requests/NNNN-contract-request.json
+    .agent-handoffs/<stage-id>/contract/runs/<run-id>/responses/NNNN-codex-contract-review.json
 
-`.agent-handoffs/` is in the root `.gitignore`; the tool refuses to write unless Git
-ignores it and nothing under it is tracked. `<stage-id>` is the Stage Contract ID
-(matching `^[A-Z][A-Za-z0-9.-]{0,15}$`). `<run-id>` is `<UTC yyyymmddThhmmssZ>-<8 hex>`;
-the active run is the greatest run ID. Requests and responses are read-only (0444) and
-are never edited, overwritten, renamed, or deleted. `index.json` names the current
-request; only `publish` changes it. Response `NNNN` answers request `NNNN`, one to one.
+The implementation channel keeps the original (H1) layout, names, and record shapes, so
+existing handoffs verify unchanged without migration. Each channel has its own runs,
+index, revision chain, and lock; a revision, index, request, or response of one channel
+is never read as, or overwrites, one of the other. `.agent-handoffs/` is in the root
+`.gitignore`; the tool refuses to write unless Git ignores it and nothing under it is
+tracked. `<stage-id>` is the Stage Contract ID (matching `^[A-Z][A-Za-z0-9.-]{0,15}$`).
+`<run-id>` is `<UTC yyyymmddThhmmssZ>-<8 hex>`; the active run of a channel is its
+greatest run ID. Requests and responses are read-only (0444) and are never edited,
+overwritten, renamed, or deleted. `index.json` names the current request; only `publish`
+changes it. Response `NNNN` answers request `NNNN`, one to one.
+
+### State machine and stop points
+
+The same cycle runs in each channel; `verify` reports where it stands as `nextGate`:
+
+1. Claude publishes revision `n` and **stops** (`nextGate: awaiting_codex_response`).
+   The user has Codex review it; Codex writes the response for revision `n`.
+2. When the user says to read it, Claude runs `verify`. Anything but `valid` → **stop**
+   and report (gate behavior above).
+3. The verdict decides the next step:
+   - contract `OK` (`awaiting_user_approval`): present that exact contract to the user and
+     **stop** until the user explicitly approves it. `OK` is never approval.
+   - implementation `PASS` (`codex_pass`): continue at Flow step 16 after a final scope
+     gate.
+   - `NEEDS_CHANGES`, `FAIL`, or `BLOCKED` (`stopped_on_codex_verdict`): **stop** and
+     report. A change or fix needs the user's authorization, then a new revision `n+1`.
+
+Revisions are immutable, so any change to a reviewed contract, including one the user
+asks for after `OK`, is a new revision that needs a new `OK` before the user's final
+approval. After approval, Claude writes the full approved Stage Contract into the
+Implementation Checkpoint (Flow step 5); the contract handoff plays no further role.
+
+**Fix-round limit**: the same blocking finding gets at most two fix rounds in each
+channel. If the finding is still blocking after round two, stop and report; never keep
+publishing revisions. A user's own change of a product trade-off also needs a new
+revision and review, but it does not reset the count for a finding that is still open.
+
+In the contract channel `publish` enforces this from the run's history:
+- revision `n` lists in `priorFindings` each blocking finding of the response to
+  revision `n-1` exactly once, with its text copied verbatim, and nothing else. After
+  `OK` the list is empty;
+- if revision `n-1` has no response yet (a `manual_refresh`, or a user change before
+  Codex answered), revision `n` repeats its findings unchanged (`finding`,
+  `previousFinding`, `fixRound`; only `resolution` may differ). The fix is still
+  unreviewed, so the round stays the same;
+- `previousFinding` links a finding to an earlier one of this run: `null` for a new
+  finding, the same text for a finding reported again (required), or the original text
+  when Codex reworded the same finding. Linked findings share one count;
+- the tool derives the round (1 for a new finding, otherwise one more than the highest
+  round of its linked findings) and refuses a `fixRound` that differs. It refuses a
+  third round with `FIX_ROUND_LIMIT` and writes nothing.
+
+The tool cannot tell that a reworded finding is the same finding: linking it is the
+publisher's duty, and Codex checks the links. The count is per run; only the user decides
+to start a new run with `init --new-run`. `verify` does not re-derive the rounds of
+stored requests. In the implementation channel the limit is procedural: a fix for a
+Codex finding shares the two-round targeted-fix limit with the Claude stage reviewer.
 
 ### When to publish
 
-Only when the user asks for a cross-agent review. The normal point is after the local
-gate and the Claude stage reviewer PASS, before step 16, so the request's `safeCommit` is
-`null`. Each request is the next revision, with a `reason`:
+**Contract channel**: once per Stage Contract draft, before asking the user to approve
+it. Each request is the next revision, with a `reason`:
+
+- `initial`: revision 1, and only revision 1;
+- `contract_revision`: after a Codex finding, with the user's authorization;
+- `user_revision`: the user changed the contract or a product trade-off;
+- `manual_refresh`: the same contract, republished because its inputs or the repository
+  moved on.
+
+**Implementation channel**: after the local gate and the Claude stage reviewer PASS,
+before step 16, so the request's `safeCommit` is `null`. Each request is the next
+revision, with a `reason`:
 
 - `initial`: revision 1, and only revision 1;
 - `targeted_fix`: after a targeted fix that needs re-review;
@@ -569,32 +666,82 @@ gate and the Claude stage reviewer PASS, before step 16, so the request's `safeC
 Nothing else is recorded: stage start, reviewer rounds, fixes, plan expiry, commit, push,
 and abandonment stay with the checkpoint, Git, safe-commit, and the stage report.
 
+**Bootstrap**: H2, the stage that added the contract channel, is the one exception: its
+own Stage Contract was approved by the user directly, and its implementation was
+reviewed through the H1 implementation handoff. The contract-review default applies from
+the first Stage Contract after H2 is pushed.
+
 ### Commands
 
 `tools/stage-handoff.mjs` uses only Node built-ins and runs only read-only Git commands
 (`rev-parse`, `status`, `rev-list`, `check-ignore`, `ls-files`) plus the read-only
 `safe-commit inspect` when a request names a plan. Every command prints one
-JSON object; exit code 0 means success or `valid`, 1 refused or not valid, 2 usage error.
+JSON object that names the `channel` it acted on; exit code 0 means success or `valid`,
+1 refused or not valid, 2 usage error. `--channel` is `contract` or `implementation`;
+without it the tool acts on `implementation`, for compatibility with H1. Always pass it
+explicitly.
 
-- `node tools/stage-handoff.mjs init --stage <id> [--new-run] --json` creates a run with
-  `currentRevision: 0`. It refuses if the stage already has a run, unless `--new-run`
-  is given; the new run records `priorRunId` and old runs are left untouched.
-- `node tools/stage-handoff.mjs publish --stage <id> --input <draft.json> --json` (Claude)
-  publishes the next request revision. A named plan must be `ready` and unexpired.
-- `node tools/stage-handoff.mjs respond --stage <id> --revision <n> --input <draft.json> --json`
+- `node tools/stage-handoff.mjs init --stage <id> --channel <channel> [--new-run] --json`
+  creates a run with `currentRevision: 0`. It refuses if the channel already has a run
+  for the stage, unless `--new-run` is given; the new run records `priorRunId` and old
+  runs are left untouched.
+- `node tools/stage-handoff.mjs publish --stage <id> --channel <channel> --input <draft.json> --json`
+  (Claude) publishes the next request revision. A named plan must be `ready` and
+  unexpired.
+- `node tools/stage-handoff.mjs respond --stage <id> --channel <channel> --revision <n> --input <draft.json> --json`
   (Codex) writes the response to request `n`, which must be the current one.
-- `node tools/stage-handoff.mjs verify --stage <id> [--revision <n>] --json` checks the
-  handoff read-only and repairs nothing.
+- `node tools/stage-handoff.mjs verify --stage <id> --channel <channel> [--revision <n>] --json`
+  checks the handoff read-only and repairs nothing.
 
 Drafts live outside the repository (for example the agent's own temporary directory).
-Both drafts must have exactly the fields listed below, as single-line strings of at most
-500 characters (summaries 300) and lists of at most 50 items.
+Every draft must have exactly the fields its channel lists below, as single-line strings
+of at most 500 characters (summaries 300) and lists of at most 50 items, except
+`contractText` and contract `inputFiles` (see Contract request). A draft for the wrong
+channel is refused (`INPUT_INVALID`).
 
-### Request
+### Contract request
+
+Claude's draft supplies:
+
+- `reason` (see When to publish);
+- `contract`: `summary`, `taskIds`, `allowedFiles` (at least one), `excluded`,
+  `testRequirements`, `contractTestRequirements`, `aiEvalRequirements`,
+  `e2eRequirements`, `securityImpact`;
+- `contractText`: the complete Stage Contract as multi-line Markdown, at most 32 KiB
+  (newlines and tabs allowed, no other control characters). It is exactly the text shown
+  to the user, so Codex reviews the same contract the user is asked to approve;
+- `openQuestions[]`: `id`, `question`, `options[]` (at least two, each `label` and
+  `description`), `recommendation`, `rationale`;
+- `priorFindings[]`: `finding`, `previousFinding` (`null` or an earlier finding's text),
+  `fixRound` (1 or 2, as derived by the tool), `resolution`; empty for revision 1. See
+  "Fix-round limit";
+- `inputFiles[]`: at least one repository-relative regular file the contract relies on,
+  such as the cited OpenSpec artifacts, `CLAUDE.md`, and this document; any POSIX name
+  except NUL;
+- `nextAction`.
+
+The tool adds `schemaVersion`, `kind: "contract-review-request"`, `channel`, `stageId`,
+`runId`, `revision`, `generatedAt`, `previousRequest`, `repo` (as in the implementation
+request), `contractSha256` (`sha256:` plus the SHA-256 of `contractText`), `inputs`
+(`inputsDigest` and `files[]` of `path` and `sha256`), `changes`, and `worktree`. The
+record has no field for approval.
+
+### Contract response
+
+Codex's draft supplies `verdict` (`OK`, `NEEDS_CHANGES`, or `BLOCKED`),
+`blockingFindings`, `nonBlockingFindings`, `suggestions`, `checksPerformed`,
+`limitations`, and `nextAction`, and nothing else; in particular it cannot carry an
+approval or decision field. The tool adds `schemaVersion`, `kind:
+"contract-review-response"`, `channel`, `reviewer: "codex"`, `generatedAt`, and `source`:
+the request's `stageId`, `runId`, `revision`, `requestPath`, `requestSha256`,
+`changedFilesDigest`, `inputsDigest`, `contractSha256`, and `currentHead`.
+
+### Implementation request
 
 Claude's draft supplies `reason`, `contract` (`summary`, `taskIds`, `allowedFiles`),
-`checkpoint` (`path` and a `summary` of `stageId`, `stageState`, `progress`; or `null`
-when the stage has no checkpoint), `verification[]` (`name`, `redactedCommand`,
+`checkpoint` (`path`, a `summary` of `stageId`, `stageState`, `progress`, and
+`containsApprovedContract: true`, stating that the checkpoint holds the user-approved
+Stage Contract; or `null` when the stage has no checkpoint), `verification[]` (`name`, `redactedCommand`,
 `exitCode`, `result`, `conciseSummary`), `claudeReview` (`reviewerType`, `round`,
 `verdict`, `blockingFindings`, `nonBlockingFindings`, `fixesApplied`),
 `contractDeviations[]` (`description`, `userApproved`), `safeCommitPlanId` (or `null`),
@@ -606,8 +753,9 @@ and `nextAction`. The tool adds the rest:
   revision 1);
 - `repo`: `branch`, `upstream`, `baselineHead` (HEAD at `init`), `currentHead`;
 - `changes`: `changedFilesDigest` and `files[]` (`path`, `status`, `sha256`, `inScope`);
-- `checkpoint.sha256` (the checkpoint file's hash), or `{path: null, sha256: null,
-  summary: "not-applicable"}`;
+- `checkpoint.sha256` (the checkpoint file's hash) and `containsApprovedContract: true`,
+  or `{path: null, sha256: null, summary: "not-applicable"}`; H1 requests, which lack
+  `containsApprovedContract`, still verify;
 - `safeCommit`: `planId`, `state`, `expiresAt`, `files`, `ignoredFiles` from
   `safe-commit inspect`, or `null`;
 - `worktree`: `clean`, `ahead`, `behind`.
@@ -615,7 +763,7 @@ and `nextAction`. The tool adds the rest:
 A changed path outside `allowedFiles` is published with `inScope: false` and reported by
 `verify` as `OUT_OF_SCOPE_CHANGES`; the reviewer and the scope gate must report it.
 
-### Response
+### Implementation response
 
 Codex's draft supplies `verdict` (`PASS`, `FAIL`, or `BLOCKED`), `blockingFindings`,
 `nonBlockingFindings`, `checksPerformed`, `limitations`, and `nextAction`. The tool adds
@@ -640,6 +788,14 @@ these bytes. `changes.files[]` holds exactly these entries (`sha256` is `<conten
 the digest can be rebuilt from the request alone and from the worktree, and both must
 agree.
 
+The contract inputs are encoded the same way:
+
+    errlog-contract-inputs/v1 NUL
+    then, per input file:  <content> NUL <path bytes> NUL
+
+sorted by path bytes; `inputsDigest` is `sha256:` plus the SHA-256 of these bytes. Any
+change to an input file's bytes, or its removal, changes the digest.
+
 ### Writes and interruptions
 
 `publish` and `respond` hold a lock (`<run>/.lock`, created with `mkdir`) and first
@@ -660,34 +816,55 @@ asks to.
 
 - `valid`;
 - `stale`: an interrupted-write leftover, or the repository has moved on
-  (`HEAD_CHANGED`, `DIGEST_CHANGED`, `CHECKPOINT_CHANGED`, `PLAN_EXPIRED`,
-  `PLAN_CONSUMED`, `PLAN_MISSING`, or `NOT_CURRENT_REVISION`);
-- `invalid`: a broken index, a hash or chain mismatch, a response not bound to its
-  request, or an unignored directory;
-- `unavailable`: no handoff, or no request yet.
+  (`HEAD_CHANGED`, `DIGEST_CHANGED`, `INPUTS_CHANGED` (contract), `CHECKPOINT_CHANGED`,
+  `PLAN_EXPIRED`, `PLAN_CONSUMED`, `PLAN_MISSING` (implementation), or
+  `NOT_CURRENT_REVISION`);
+- `invalid`: a broken index, a hash or chain mismatch (including `INPUTS_MISMATCH` and
+  `CONTRACT_HASH_MISMATCH` inside a contract request), a record of the wrong channel or
+  shape, a response not bound to its request, or an unignored directory;
+- `unavailable`: no handoff in that channel, or no request yet.
 
 It checks the index, every request back to revision 1 (contiguous revisions, each
 `previousRequest` hash, the current hash in the index, each digest against its
 `files[]`), the response binding, and then compares the current request with HEAD, the
-worktree digest, the checkpoint hash, and the safe-commit plan. The output also gives
-`request` (`path`, `sha256`, `intact`), `response` (`present`, `verdict`, `bindingOk`),
-`plan`, `reasons`, and `notices`.
+worktree digest, and either the contract input files or the checkpoint hash and the
+safe-commit plan. The output also gives `channel`, `request` (`path`, `sha256`,
+`intact`), `response` (`present`, `verdict`, `bindingOk`), `plan`, `nextGate` (see State
+machine; `null` unless `valid`), `reasons`, and `notices`. A valid contract `OK` always
+carries the notice `USER_APPROVAL_REQUIRED`.
 
 ### Using a response (Claude)
 
-When the user says to read the current Codex response, run `verify` first. Read the
-response only if `status` is `valid` and `response.present` is true; anything else is not
-usable. Report the verdict and findings to the user. On `PASS`, continue the workflow
-(step 16 onward, after a final scope gate). On `FAIL` or `BLOCKED`, stop. A fix needs the
-user's instruction and shares the two-round targeted-fix limit with the Claude stage
-reviewer; after it, publish a `targeted_fix` revision for the next review.
+When the user says to read the current Codex response, run `verify` with the channel
+first. Read the response only if `status` is `valid` and `response.present` is true;
+anything else stops the workflow (gate behavior). Report the verdict and findings to the
+user, then follow the State machine: after a contract `OK`, ask for the user's approval of
+that exact contract; after an implementation `PASS`, continue at step 16 after a final
+scope gate; otherwise stop. Before an implementation review, confirm the checkpoint's
+approved Stage Contract still matches the contract the user approved; on any drift,
+report it and stop.
 
 ### Instructions for Codex
 
-Run `verify` and continue only if the current request is `valid`. Review the actual
-repository (the diff against `repo.currentHead` and the changed files), not just the
-request's claims. Never modify code, Git, the index, the request, or the checkpoint.
-Write the draft outside the repository, then run `respond` for the current revision.
+Run `verify --channel <channel>` and continue only if the current request is `valid`.
+Never modify code, Git, the index, the request, or the checkpoint, and never approve
+anything on the user's behalf. Write the draft outside the repository, then run
+`respond` with the same channel for the current revision.
+
+- **Contract review**: read `contractText` and the listed input files in the repository,
+  and check the contract against the cited OpenSpec tasks, requirements, and design, this
+  document, and `CLAUDE.md`: scope, allowed and excluded paths, test/E2E/security
+  requirements, and whether the open questions and alternatives are fairly presented.
+  Product trade-offs remain the user's decision; raise them, do not decide them. In a
+  later revision, check that `priorFindings` links each finding you raised again, even
+  reworded, to its earlier text through `previousFinding`; a missing or wrong link is a
+  blocking finding.
+- **Implementation review**: read the full approved Stage Contract in the checkpoint
+  (`checkpoint.path`) and review the actual repository (the diff against
+  `repo.currentHead` and the changed files) against it: the diff stays inside the
+  allowed files, the tests and gates required by the contract ran and pass. Do not rely
+  on the request's claims alone. A stage with `checkpoint: null` has its contract in the
+  request's `contract` and its stage report.
 
 ### Safety
 
@@ -706,9 +883,12 @@ Slack, JWT, or `sk-` key formats; an email address outside `example.test`, `exam
 and `example.invalid`; a mainland mobile number (optionally `+86` or dash-separated); or
 three or more `NAME=value` assignments. Wording such as `token: …` or `OTP: …` in review
 text also trips the scan; rephrase it. `verify` applies the same scan and the response
-field checks to stored records, so a hand-written record is reported `invalid`. Only
-changed files' hashes are stored, never their contents. The scan is a safety net; the
-writer remains responsible for redaction.
+field checks to stored records, so a hand-written record is reported `invalid`. Both
+channels use the same scan; it covers the serialized record and also each raw string
+value, so a match at the start of a line in a multi-line `contractText` is caught. Only
+hashes of changed files and contract input files are stored, never their contents; the
+contract text itself is the one stored document. The scan is a safety net; the writer
+remains responsible for redaction.
 
 ### Retention
 
