@@ -7,21 +7,24 @@ This is a working document, not a spec artifact.
 
 - This section is the authoritative current handoff; later historical refinement notes
   may contain superseded point-in-time wording.
-- Handoff verified: 2026-10-13 (Asia/Shanghai).
+- Handoff verified: 2026-10-16 (Asia/Shanghai).
 - Planning baseline: completed and committed in `aff5550317f99a9acf82fc6c480d617fa18198e5`;
-  later planning amendments (e.g. refine P1(12): design D21 + task 1.5) are tracked through
-  Git history, not by this SHA.
-- Implementation workflow is committed in `431413ee4484814002db0fe4022d1c87fe1a256e`.
-- Implementation progress: 3/89 tasks (task 1.5 added 2026-10-10 via refine P1(12): no task
-  owned the CI required by `docs/implementation-workflow.md`; now anchored by design D21).
+  later planning amendments (e.g. refine P1(12): design D21 + task 1.5; P1(15): task 1.4
+  scope) are tracked through Git history, not by this SHA.
+- Implementation workflow is committed in `431413ee4484814002db0fe4022d1c87fe1a256e`;
+  the cross-agent review handoff was added in `f14fc6f` (H1) and made a default gate with
+  a contract channel in `f1a6d44` (H2).
+- Implementation progress: 4/89 tasks.
 - Application skeleton: stage S1.1 (task 1.1) committed in `e02c65f`; stage S1.2 (task 1.2)
-  committed in `c960445`; stage S1.3 (task 1.3) verified and reviewed; ready for safe-commit.
-- Active Stage Contract: S1.3 (task 1.3 only) — user-approved 2026-10-13.
+  committed in `c960445`; stage S1.3 (task 1.3) committed in `d297b45`; stage S1.4
+  (task 1.4) verified, reviewed and Codex `PASS`; ready for safe-commit.
+- Active Stage Contract: S1.4 (task 1.4 only) — contract handoff revision 2 Codex `OK`;
+  user-approved 2026-10-16 with Q1 = A, Q2 = A.
 - Active Implementation Checkpoint: see "Implementation Checkpoint" section below.
 - Repository-local remote CI configuration observed at handoff: none; every new session
   must re-check actual remote CI/check status rather than trust this snapshot.
-- Git state observed before opening this continuity-document edit: clean and
-  synchronized with `origin/experiment/install-opsx-refine`; every new session must
+- Git state observed before opening this checkpoint edit: clean and synchronized with
+  `origin/experiment/install-opsx-refine` at `64556a6`; every new session must
   re-inspect branch/HEAD/upstream/worktree.
 - Next action: follow the Implementation Checkpoint below.
 - Historical snapshots further below in this file (e.g. "Not yet written into any
@@ -32,135 +35,276 @@ This is a working document, not a spec artifact.
 
 ## Implementation Checkpoint
 
-- Stage ID: S1.3
-- OpenSpec task IDs: 1.3
+- Stage ID: S1.4
+- OpenSpec task IDs: 1.4
 - stageState: ready_for_safe_commit
-- Last updated: 2026-10-13 (Asia/Shanghai)
-- User approval: Stage Contract S1.3 approved 2026-10-13 (Q1–Q17 decisions plus T1–T3).
-- Contract summary: one forward-only pure-SQL node-pg-migrate migration creating the
-  identity/ownership/association skeleton — 7 domain-entity tables + 1
-  `correction_worksheet_item` association table, 8 tables in total (`app_user`,
-  `identity`, `child`, `worksheet_archive`, `grading_session`, `error_question`,
-  `correction_worksheet`, `correction_worksheet_item`). UUID PKs via core
-  `gen_random_uuid()`; explicitly named constraints; cross-User/cross-Child links
-  rejected by composite FKs; NO ACTION FKs; no trigger, ENUM, custom function, or
-  extension; only `uploaded_at` timestamp. `child.display_name` CHECK rejects empty,
-  boundary-whitespace-only and untrimmed values over the set space/tab/LF/CR/VT/FF
-  (T2); internal whitespace and duplicate names allowed. Migration runs only via
-  explicit `npm run db:migrate` (never on web startup); tool defaults kept (single
-  transaction, advisory lock, `pgmigrations`, order check). Persistent `node:test`
-  constraint test reads only `ERRLOG_SCHEMA_TEST_DATABASE_URL`, fails if unset, rolls
-  back everything (T3). E2E: `not-applicable` (persistence schema only; no UI, route, or
-  user-visible behavior).
-- Dependencies (T1): `pg@8.23.0` (dependencies), `node-pg-migrate@9.0.0`
-  (devDependencies), exact versions, both installs with
-  `--before=2026-09-28T00:00:00Z`; every newly added direct/transitive package published
-  no later than the cutoff; existing lock entries (Next.js, React, …) unchanged;
-  otherwise stop and report.
-- Allowed paths: `apps/web/package.json` (two deps + `db:migrate`/`test:db` scripts);
-  `apps/web/package-lock.json`; `apps/web/db/migrations/<timestamp>_initial-schema.sql`
-  (exactly one); `apps/web/db/tests/schema-constraints.test.mjs`; `README.md` (short
-  migration subsection under Local development stack); this file (checkpoint + handoff
-  status lines); `tasks.md` (1.3 checkbox only).
-- Excluded: `compose.yaml`; Dockerfiles; `.dockerignore`; `.gitignore`; `.env*`;
-  OpenSpec planning artifacts; governance files; tasks 1.4/1.5; UI/API/Auth/upload/AI/
-  Playwright; any operation on project `errlog-dev` or volume `errlog-dev_pgdata`
-  (including creating it).
-- Verification plan: temp compose project `errlog-v13-<UTC>` only; V0 read-only
-  preflight snapshot; V1 failing evidence; V2 install + lock/age checks + audit
-  baseline; V3 fresh `db:migrate`; V4 catalog vs plan; V5 second-up no-op + schema dumps
-  A=B=C (after db restart + normal web start); V6 `test:db` + post-test dump/rowcount; V7
-  node-pg-migrate probes P1–P6 (SQL loader, transaction, order check, lock, history,
-  config source) in a probe DB; V8 secret scan; V9 cleanup by exact name + label, no
-  `-v`, no prune, snapshots identical. Scripts/evidence live in the session temp dir only.
-- Work completed: checkpoint; V0–V9; migration
-  `apps/web/db/migrations/1791859549619_initial-schema.sql` (generated by
-  `node-pg-migrate create -j sql`, Down section removed); constraint test; package
-  scripts `db:migrate`/`test:db`; README "Database migrations" subsection; local gate +
-  scope gate.
-- V0 preflight (2026-10-13, read-only): `COMPOSE_PROJECT_NAME` unset; Compose v5.1.3;
-  temp project `errlog-v13-20261013024253` resolves to volume
-  `errlog-v13-20261013024253_pgdata`; `web` has no environment keys (only `db` has
-  `POSTGRES_PASSWORD`); `errlog-dev_pgdata` absent (never created).
-- V1 failing evidence: catalog check FAIL (8 tables + `pgmigrations` missing, exit 1);
-  `test:db` without `ERRLOG_SCHEMA_TEST_DATABASE_URL` → all tests fail on the guard
-  assertion (exit 1); `test:db` before migration → 1 pass / 10 fail (exit 1).
-- V2 install (T1): npm 10.8.2 on the host dropped the `libc` field of 20 existing
-  optional platform entries (version/resolved/integrity unchanged), so both files were
-  restored and the install was redone with the npm 11.19.0 of the project image
-  `node:24.21.0-bookworm-slim` (`--save-exact --ignore-scripts --before=2026-09-28T00:00:00Z`).
-  Result: lockfile v3; 0 existing entries changed or removed; 36 new packages, all
-  published before the cutoff (e.g. pg 8.23.0, pg-protocol 1.16.0,
-  pg-connection-string 2.14.0, pg-cloudflare 1.4.0, pg-pool 3.14.0, node-pg-migrate
-  9.0.0, yargs 18.0.0, jiti 2.7.0, glob 13.0.6); `npm ls --all` ok; dotenv not
-  installed; `npm audit`: 0 vulnerabilities (baseline only).
-- V3: temp `web` image build (`npm ci`, `next build` + TypeScript) ok; first
-  `npm run db:migrate` exit 0, history row `1791859549619_initial-schema`.
-- V4: catalog vs plan PASS — 8 tables, 27 named constraints, 6 indexes, columns/types/
-  nullability/defaults exact; FKs plain NO ACTION; extensions = [plpgsql]; no enum,
-  trigger, function, view or app sequence. Both CHECK trim sets are bytes
-  `20 09 0a 0d 0b 0c` (space, tab, LF, CR, VT, FF).
-- V5: second `db:migrate` → `No migrations to run!`, `pgmigrations` 1 row; schema-only
-  dumps A (after first up) = B (after second up) = C (after db restart + normal
-  `up --wait db web`, web HTTP 200, web env has no DB variable); pg_dump 18's random
-  `\restrict` lines excluded from the comparison.
-- V6: `test:db` 11/11 pass (display_name: 18 invalid values incl. empty, space/tab/LF/
-  CR/VT/FF-only and untrimmed rejected with the named CHECK, NULL rejected; internal
-  whitespace kept; duplicate names allowed; U+3000 boundary accepted and left to 5.7;
-  current_child, identity uniqueness, archive name/default, session/archive/question/
-  worksheet cross-User and cross-Child rejections); dump D = A (schema unchanged); the
-  test always ends in `ROLLBACK` by design (a row-count query showing 0 rows in all 8
-  tables was observed in the console but not saved under `ev/`).
-- V7 node-pg-migrate 9.0.0 observed (probe DBs inside T, dropped afterwards): P1 the
-  `-- Up Migration` SQL file is loaded and run; P5 history table `pgmigrations(id
-  integer, name varchar, run_on timestamp)`; `down` on an Up-only SQL file exits 1 with tables and history unchanged (the
-  saved log kept only stack frames; the 9.0.0 SQL loader maps a missing Down section
-  to `down: false`, which throws "User has disabled down migration on file"); P2 a failing second
-  pending migration rolls back the first too (no tables, no history rows); P3 an
-  earlier-numbered file after a later one is applied → "Not run migration … is
-  preceding already run migration …", exit 1, nothing applied; P4 two concurrent `up`
-  → one applies, the other fails immediately ("Another migration is already running.
-  Advisory lock mode is set to 'fail'"), one history row; P6 no `.env`/config file
-  used, without `DATABASE_URL` the CLI refuses. Mutation check: a variant with
-  `btrim(display_name)` (spaces only) and a non-composite error_question FK makes
-  `test:db` fail exactly those 2 tests.
-- V8: the temporary password is absent from all evidence, scripts, repo files and this
-  checkpoint; no credentialed connection string in any of them.
-- V9: `down` (no `-v`); `errlog-v13-20261013024253_pgdata` volume and
-  `errlog-v13-20261013024253-web:latest` image removed by exact name after verifying
-  label `com.docker.compose.project`; no pdf-processing image was built; no T
-  containers/networks/volumes remain; before/after snapshots identical;
-  `errlog-dev_pgdata` still absent; temporary password file deleted.
-- Local gate: `openspec validate --strict` valid; safe-commit tests 27/27. Scope gate:
-  modified `README.md`, `apps/web/package.json`, `apps/web/package-lock.json`
-  (additions only), this file; new `apps/web/db/migrations/1791859549619_initial-schema.sql`,
-  `apps/web/db/tests/schema-constraints.test.mjs`.
-- Evidence (session temp dir, not committed): `check_catalog.py`, `catalog.sql`,
-  `probes.sh`, `ev/` (catalog JSON, dumps A–D, migrate/test/probe logs, lock report,
-  before/after snapshots).
-- After checking 1.3 (2026-10-13): `openspec validate --strict` valid; progress 3/89;
-  the `tasks.md` diff is only the 1.3 checkbox.
+- Last updated: 2026-10-16 (Asia/Shanghai)
+- User approval: Stage Contract S1.4 revision 2 approved by the user 2026-10-16, after
+  Codex contract review `OK` (contract run `20261014T071001Z-21a6d284`, request
+  `0002-contract-request.json`, `contractSha256`
+  `sha256:8fc50532ebff3c2f9fe1ceeba257429d5693dcca2c6d3ff798f7bda982e9546d`).
+  Choices: **Q1 = A** (exclude `db/seed` from the web image via `.dockerignore`;
+  read-only bind mount for local runs); **Q2 = A** (provider `'dev-seed'`).
+  The user also adopted the Codex response's non-blocking advice, as an implementation
+  detail of the approved contract (no contract text change):
+  - (N1) an existing `dev-seed` identity whose `provider_subject` or current Child
+    `display_name` differs from the fixed fixture values is an inconsistent state:
+    fail without writes, never accept it as the fixture;
+  - the rejected mismatched-user/Child `grading_session` probe runs behind a savepoint
+    (or in its own rolled-back transaction), since a constraint error aborts the
+    surrounding transaction.
+- Allowed paths: `apps/web/db/seed/dev-seed.mjs` (new); `apps/web/db/seed/dev-seed.test.mjs`
+  (new); `apps/web/.dockerignore` (one line `db/seed`); `apps/web/package.json` (two
+  scripts only); `README.md` (Dev seed subsection under Local development stack); this
+  file (checkpoint + handoff status lines); `tasks.md` (1.4 checkbox only).
+- Work completed: checkpoint written (replaces the stale S1.3 checkpoint/handoff block);
+  V0–V8; seed module + CLI `apps/web/db/seed/dev-seed.mjs`; test
+  `apps/web/db/seed/dev-seed.test.mjs`; `.dockerignore` line `db/seed`; scripts
+  `db:seed:dev`/`test:dev-seed`; README "Dev seed" subsection; local gate + scope gate.
+- V0 (2026-10-16, read-only): `COMPOSE_PROJECT_NAME` unset; Compose v5.1.3; temp project
+  `errlog-v14-20261016065114` (volume `errlog-v14-20261016065114_pgdata`); `web` has no
+  environment keys; `errlog-dev_pgdata` absent.
+- V1 failing evidence: `node --test db/seed/dev-seed.test.mjs` before the module existed
+  → `ERR_MODULE_NOT_FOUND`, exit 1; no `db:seed:dev` script, no CLI.
+- V2: temp `web` image built (`next build` ok); `/app/db` holds only `migrations`/`tests`
+  (`db/seed` absent); `npm run db:seed:dev` in the image → `Cannot find module`, exit 1.
+- V3: fresh `db:migrate` ok; `test:db` 11/11 pass (regression).
+- V4: `test:dev-seed` via read-only bind mount 9/9 pass; afterwards all 8 tables have 0
+  rows. Without `ERRLOG_SCHEMA_TEST_DATABASE_URL` all 9 tests fail (exit 1). Mutations
+  (drop the provider_subject check; drop the current-Child display_name check; print the
+  connection string on error) each fail exactly the matching test.
+- V5: CLI run 1 → `created`, run 2 → `existing` with the same three UUIDs; rows 1/1/1,
+  `grading_session` 0, fixture values and ownership as specified; without
+  `ERRLOG_DEV_SEED_DATABASE_URL` → refused, exit 1. Extra (probe DBs in the temp server,
+  dropped afterwards): two parallel CLI runs serialized (`created` + `existing`, 1/1/1);
+  a two-connection probe (A seeds, B seeds concurrently, A commits) → B fails with
+  23505 `identity_provider_subject_key` and rolls back, rows 1/1/1.
+- V6: normal `up --wait web` healthy, HTTP 200; web env has no DB variable; no
+  `/app/db/seed` in the running web container.
+- V7: the temporary password is absent from all evidence, scripts, repo files
+  (including `.agent-handoffs/`) and this checkpoint, re-checked after the README edit.
+- V8: `down` (no `-v`); volume and image removed by exact name after verifying label
+  `com.docker.compose.project`; no T containers/networks/volumes/images remain;
+  before/after snapshots identical; `errlog-dev_pgdata` still absent; password file
+  deleted.
+- Local gate: `node --test test/` 53/53; `openspec validate --strict` valid; progress
+  3/89. Scope gate: modified `README.md`, `apps/web/.dockerignore` (+1 line),
+  `apps/web/package.json` (+2 scripts), this file; new `apps/web/db/seed/dev-seed.mjs`,
+  `apps/web/db/seed/dev-seed.test.mjs`; `tasks.md` unchanged.
+- Evidence (session temp dir, not committed): `ev/` (V0/V8 snapshots, build, migrate,
+  test, mutation, CLI, probe and scan logs), `probe/conflict.mjs`, `mut/`.
+- Implementation handoff: run `20261016T070105Z-0c4b44d4`, revision 1 (request SHA-256
+  `72754e24…853c`); Codex verdict `PASS`, no blocking; its three non-blocking findings
+  match N-a/N-b/N-c below (Codex also confirmed the malformed-URL path redacts the input
+  and emits no credential); `verify` valid, `nextGate` `codex_pass`.
+- After checking 1.4 (2026-10-16): `openspec validate --strict` valid; progress 4/89;
+  the `tasks.md` diff is only the 1.4 checkbox; `node --test test/` 53/53.
 - Work remaining: safe-commit `check` → user approval → `commit` → separate push
   approval → `push`.
 - Tests not yet run: none for this stage.
-- Reviewer findings, round 1 (fresh read-only reviewer): verdict PASS, no blocking.
-  Fixed: (N1) V6 rollback wording no longer claims saved row-count evidence; (N2) V7
-  `down` wording matches what the saved log shows; (N8) README now suggests
-  `unset DATABASE_URL`. Recorded, not changed: (N3) carried forward below for 5.7;
-  (N4) `worksheet_archive.name` is stored as entered (spec defines no normalization);
-  (N5) the test pins the exact table list and "no enum/trigger" and must be updated by
-  later migrations; (N6) a failure outside `rejects()` cascades to later tests (fails
-  safe); (N7) `db:migrate` in the `web` image relies on the single-stage Dockerfile's
-  full `npm ci` (devDependencies) — revisit for 1.5/deployment; (N9) lock mode `fail`
-  and PG18 auto-named NOT NULL constraints are as intended.
-- Carry-forward for task 5.7/5.9 (from N3): the application whitespace rule must trim
-  at least space, tab, LF, CR, VT and FF (JS `String.prototype.trim()` does), otherwise
-  values the app accepts would hit `child_display_name_normalized_check` (23514).
+- Reviewer findings, round 1 (fresh read-only general-purpose reviewer; the
+  `stage-reviewer` agent definition is created only by 4.1): verdict PASS, no blocking.
+  Recorded, not changed (no fix after review, so no re-verification needed):
+  (N-a) `new pg.Client(...)` is constructed before the CLI's `try`, so a malformed
+  connection string ends in an uncaught stack trace instead of the one-line message;
+  still exit 1 and no credential in the reviewer's probes, but not covered by a test;
+  (N-b) an existing `dev-seed` Identity with the fixture `provider_subject` but a
+  different `identifier` is not found by the `(provider, identifier)` lookup and fails
+  on the unique constraint (23505) with rollback: fail-closed without writes, but as a
+  raw error, so the README's "reported as inconsistent" is slightly broader than the
+  code; (N-c) V8 volume/image removal is evidenced only indirectly (identical
+  before/after snapshots).
 - Files expected in worktree: the six files listed under Scope gate plus `tasks.md`
-  (1.3 checked).
+  (1.4 checked).
 - Blockers: none.
-- Next action: run safe-commit `check` for S1.3 (7 files) and wait for user approval
+- Next action: run safe-commit `check` for S1.4 (7 files) and wait for user approval
   of the plan.
+
+### Approved Stage Contract S1.4 (revision 2, verbatim)
+
+The fenced block is the exact `contractText` of the approved contract request.
+
+````markdown
+# Stage Contract S1.4 — 本地开发 fixture 数据前置条件（revision 2 草案）
+
+## 相对 revision 1 的变更
+- 依据 P1(15)（commit 64556a6）重写：task 1.4 只负责创建并验证 synthetic local-dev fixture 数据前置条件；本 stage 不证明 caller context、应用工作流或浏览器旅程。
+- 首次 caller-context 正向证明归 task 2.5；首次浏览器用户旅程归 task 4.1。
+- 被 seed 的 Identity 统一称为 local-dev fixture identity：不是 allowlist 条目、不是登录入口、不是生产认证路径。
+- 旧 Q3（allowlisted 含义）和旧 Q4（"驱动流程"的范围）已被 P1(15) 消除，不再保留；Q1、Q2 仍待用户选择。
+- 1.4(c) 的 GradingSession 探针明确为测试内、事务内、回滚的探针，不属于 seed 输出（吸收 P1(15) reviewer 意见）。
+- 补充清理说明：数据库测试一律回滚；临时 Compose project 的清理范围与禁止项写明。
+
+## Stage ID
+S1.4
+
+## OpenSpec task IDs
+1.4（仅此一项）
+
+## Expected outcome
+- 新增一个本地开发专用的 seed 命令。在一个已迁移的数据库中，它用一个事务插入同一组 synthetic fixture 记录：
+  - 1 个 `app_user`；
+  - 1 个 `identity`（local-dev fixture identity）；
+  - 1 个 `child`，`display_name` 已规范化且非空；
+  - 同时把该 User 的 `current_child_id` 设为这个 Child。
+- 这些记录只是后续 stage 消费的数据前置条件：2.5 用它做首次 caller-context/ownership 访问检查，4.1 把它作为首个浏览器旅程中明确标注的旅程前置条件（D22）。
+- 本 stage 不证明 caller context、应用工作流或用户旅程，也不实现它们。
+- 该 Identity 不是 allowlist 条目，不是登录入口，也不是生产认证路径：
+  - Group 5 之前不存在 allowlist 或 OTP 机制，5.4 才会替换此路径；
+  - seed 代码不在生产镜像里，不暴露 HTTP 路由，不被 Next.js 应用代码 import；
+  - 13.4 会在生产配置下复验它不可达。
+- 重复运行是幂等的：
+  - 已存在时不写入、不修改任何记录，只报告已有的 id；
+  - 遇到不一致的残缺状态时报错退出，不做修复。
+- 命令只输出合成标识和 UUID（JSON），不输出连接串或密码。
+
+## Requirement / Scenario / Design 追溯
+- tasks.md 1.4（P1(15) 之后的文本），逐条对应：
+  - (a) 新迁移的隔离库上恰好创建该 User/Identity/Child，`currentChildId` 指向其本人的 Child，`displayName` 规范化且非空 → V4 测试与 V5 CLI 运行；
+  - (b) 重复运行不产生重复、不改变数据 → 幂等测试（前后全表快照一致）与 V5 第二次运行；
+  - (c) seed 记录满足 1.3 的归属约束 → 回滚的 GradingSession 探针测试；
+  - (d) 只用合成数据，不需要真实凭据 → 固定合成值、secret 扫描。
+- tasks.md 1.4 末句："This task does not itself prove caller-context access or a user journey"。所以本合同不加 caller-context 机制，也不加旅程证明。
+- D2（身份模型）：User 与 Identity 分离，Identity 记录 `provider` / `provider_subject` / `identifier`。
+- D4 与 child-profile spec："当前孩子指针的归属与有效性"：
+  - `currentChildId` 指向本人拥有的 Child；
+  - 首个 Child 立即成为当前孩子；
+  - `displayName` 规范化后非空（1.3 的 `child_display_name_normalized_check` 是第二道防线）。
+- access-control spec："MVP 为家庭单账号使用场景"。dev seed 不得成为生产中绕过认证的入口。
+- Migration Plan：生产环境的 User 由首次 OTP 登录创建（5.4），不手工 seed。
+- D22 与 CLAUDE.md：手动走查不是产品 E2E。1.4 的 fixture identity 只作为 4.1 明确标注的旅程前置条件，不得称为登录 E2E。
+- 下游消费：
+  - 2.5：首次 caller-context 正向证明（为该 identity 拥有的资产签发 URL），以及两项拒绝检查；
+  - 4.1：旅程前置条件；
+  - 1.5(g)：本 stage 的 `test:dev-seed` 可作为可自动运行的 seed smoke test。
+- 下游复验：13.4（生产中不可用）。
+
+## Dependencies
+- 1.3 的 schema（`1791859549619_initial-schema.sql`）：不修改，也不新增 migration。
+- 现有依赖 `pg@8.23.0`：不新增依赖，`package-lock.json` 不变。
+- 1.1/1.2 的 Compose 骨架。验证只在临时 Compose project 中进行。
+
+## 设计（随本合同一起批准；Q1、Q2 的选择以用户明确选定为准）
+- **Seed 模块** `apps/web/db/seed/dev-seed.mjs`：
+  - 导出 `seedDevIdentity(client)`，在调用方提供的事务内执行；
+  - 同时提供 CLI 入口：自行 `BEGIN`，成功后 `COMMIT`，任何错误都 `ROLLBACK` 并以非零码退出。
+- **固定的合成值**（按 Q2 推荐项 A 起草；全部是合成数据，不含真实邮箱或手机号）：
+  - `identity.provider = 'dev-seed'`
+  - `identity.provider_subject = 'dev-seed:dev-parent'`
+  - `identity.identifier = 'dev-parent@example.test'`（`.test` 是保留 TLD）
+  - `child.display_name = 'Dev Child'`（已规范化：无首尾空白、非空）
+- **幂等规则**：
+  - 先按 `(provider, identifier)` 查 identity；
+  - 已存在：校验该 User 的 `current_child_id` 非空且指向其本人的 Child，然后输出 `{"status":"existing",...}`，不写任何记录；
+  - 状态不一致：报错退出，不修复；
+  - 不存在：插入 user → identity → child，再设置 `current_child_id`，输出 `{"status":"created",...}`；
+  - 并发运行时由 `identity` 的唯一约束保证只创建一份，失败的那次整体回滚。
+- **seed 只写这三张表**：它不创建 `grading_session` 或任何其他业务记录。1.4(c) 的 GradingSession 只是测试里的探针（见 Test requirements）。
+- **连接串**：只读 `ERRLOG_DEV_SEED_DATABASE_URL`，不读 `DATABASE_URL`，从不打印；未设置时立即拒绝，不连接数据库。它只是本地数据库连接，不是任何真实账号凭据。
+- **生产隔离**（按 Q1 推荐项 A 起草）：
+  - 在 `apps/web/.dockerignore` 中排除 `db/seed`，web 镜像（也就是生产构建）中不含 seed 代码；
+  - 本地运行时用只读 bind mount 把 `apps/web/db/seed` 挂进一次性 web 容器；
+  - 应用代码不 import 它，也没有任何路由。
+- **npm scripts**：
+  - `db:seed:dev`：`node db/seed/dev-seed.mjs`
+  - `test:dev-seed`：`node --test db/seed/dev-seed.test.mjs`
+  - 在生产镜像中它们指向不存在的文件，执行即失败。
+- 如果用户在 Q1 或 Q2 选 B，本节相应部分改写，并发布新的 contract revision 交 Codex 复审；不按本草案直接实施。
+
+## Sub-steps
+1. 用户批准合同后，写 Implementation Checkpoint（`in_progress`，包含本合同全文和用户对 Q1、Q2 的选择），同时修正 scratchpad 中已过时的 S1.3 handoff 状态行。
+2. V0 只读预检：记录 Docker/Compose 快照，确认 `errlog-dev_pgdata` 状态，之后不做任何改动。
+3. V1 失败证据：先写测试；模块不存在时测试失败。
+4. 实现 seed 模块、CLI、npm scripts 和 `.dockerignore`。
+5. V2–V8 验证（见 Evidence）。
+6. README 增加简短的 "Dev seed" 小节：说明它是 local-dev fixture 数据，只限本地开发；写明运行命令（bind mount，连接串只按变量名传递）；写明"不是 allowlist、不是登录入口、不是生产路径"；写明 2.5/4.1 才使用它。
+7. 本地 gate 和 scope gate → 独立 reviewer → implementation handoff → 勾选 1.4 → `ready_for_safe_commit` → safe-commit。
+
+## Exact paths allowed to change
+- `apps/web/db/seed/dev-seed.mjs`（新建）
+- `apps/web/db/seed/dev-seed.test.mjs`（新建）
+- `apps/web/.dockerignore`（只加一行 `db/seed`）
+- `apps/web/package.json`（只加两个 scripts，不改依赖）
+- `README.md`（只在 Local development stack 下加 Dev seed 小节）
+- `openspec/changes/math-error-correction-mvp/scratchpad.md`（只改 checkpoint 和过时的 S1.3 handoff 状态行）
+- `openspec/changes/math-error-correction-mvp/tasks.md`（只勾选 1.4）
+
+## Explicitly excluded
+- 任何 caller-context、dev 会话或 dev 身份 helper，包括 2.5 的检查本身；任何应用工作流或浏览器旅程证明（归 2.5 和 4.1）。
+- 任何 migration 或 schema 变更，包括 allowlist 表。
+- `compose.yaml`、`apps/web/Dockerfile`、`.gitignore`、`.env*`、`apps/web/package-lock.json`、任何依赖变更。
+- `apps/web/app/**` 及任何应用代码、路由、middleware、UI。
+- AuthService、OTP、allowlist 机制（Group 5）；4.1 的 E2E；1.5 的 CI。
+- 除 1.4 勾选以外的任何 OpenSpec artifact；治理文件（`CLAUDE.md`、workflow 文档、tools、`.safe-commit.json`）。
+- 对 Compose project `errlog-dev` 或 volume `errlog-dev_pgdata` 的任何操作（包括创建）。在开发库上运行 seed 由用户自己执行。
+- 删除或清理 seed 数据的命令。
+- seed 写入 `grading_session` 或任何其他表。
+
+## Test requirements
+- 持久化 `node:test` 文件 `apps/web/db/seed/dev-seed.test.mjs`，从同一目录 import 模块。
+  - **需要数据库的用例**：
+    - 只读 `ERRLOG_SCHEMA_TEST_DATABASE_URL`，与 1.3 测试相同，未设置即失败；
+    - 每个用例在自己的事务中运行，结束时一律 `ROLLBACK`（成功和失败都是），不留任何行；测试不 `COMMIT`。
+  - **覆盖的内容**：
+    - (a) 首次调用：创建 1 个 user、1 个 identity、1 个 child，`current_child_id` 指向该 Child 且归属该 User，值与固定合成值一致，`display_name` 规范化且非空；
+    - (b) 再次调用：返回 `existing`，id 不变；三张表的全表行快照与第一次调用后一致（不重复、不修改）；
+    - 残缺状态（识别到 identity，但其 User 没有 `current_child_id`）：报错，不写入；
+    - (c) 归属约束探针：
+      - 在同一个将被回滚的事务里，插入一个绑定 seed 出的 user/child 的 `grading_session`，确认被 1.3 的复合外键接受；
+      - 作为对照，把同一 child 配另一个 user 的 `grading_session` 被拒绝；
+      - 该探针只存在于测试中，seed 模块和 CLI 不写 `grading_session`；
+      - 它只证明数据满足约束，不是 caller-context 证明；
+    - (d) CLI：未设置 `ERRLOG_DEV_SEED_DATABASE_URL` 时以非零码拒绝且不连接数据库；输出中不含连接串。
+- 1.3 的 `test:db` 回归通过。
+- 失败证据先于实现。
+
+## Contract-test requirements
+无。5 个命名边界（AuthService、StorageService、PdfProcessingPort、AI Task Contract、Provider adapter）都不涉及：seed 直接写本地 PostgreSQL，不是 port。
+
+## AI-eval requirements
+无，不涉及 AI。
+
+## User-journey E2E requirements
+- Applicability：`not-applicable`。理由：没有新增或改变用户可见行为，只是一个开发者 CLI 和 fixture 数据，没有 UI、路由或页面；首个浏览器旅程归 4.1。
+- E2E worker：none（理由同上）。
+- 其余各项：不适用。
+- 下游约束：4.1 首次把该 fixture identity 用作旅程前置条件时，须按 D22 明确标注，不得称为登录 E2E。
+
+## Security / privacy / trust-boundary impact
+- 该 seed 能在不经 OTP 的情况下创建 User/Identity，因此必须与生产隔离：
+  - 代码不在 web 镜像中（`.dockerignore`）；
+  - 需要专用环境变量；
+  - 没有路由，也不被 import。
+  - 本 stage 用镜像检查证明 seed 不在镜像中；13.4 之后在生产配置下复验。
+- 它不是 allowlist 条目，也不提供登录能力。`provider = 'dev-seed'` 不对应任何真实 OTP provider，所以 dev 记录带有明确标记，也不会与 5.4 的真实 email/phone identity 冲突。
+- 全部为合成数据。连接串只通过变量名传递，不写入文件、日志或证据。临时密码只存在于验证会话中，之后删除。
+
+## Evidence of completion
+所有验证只在临时 Compose project `errlog-v14-<UTC>` 中进行，不碰 `errlog-dev`。
+- **V0**：只读预检快照。
+- **V1**：失败证据（测试因模块缺失失败；CLI 不存在）。
+- **V2**：构建临时 web 镜像（`next build` 成功）；镜像中 `/app/db/seed` 不存在；生产镜像里运行 `npm run db:seed:dev` 失败。
+- **V3**：新库执行 `db:migrate`；`test:db` 11/11 通过（回归）。
+- **V4**：通过只读 bind mount 运行 `test:dev-seed`，全部通过；测试后 8 张表行数仍为 0（证明回滚，没有残留）。
+- **V5**：在临时库上用 CLI 真实运行两次：第一次 `created`，第二次 `existing`，id 相同；只读查询确认行数是 1/1/1，`current_child_id` 有效，`grading_session` 为 0 行；未设置连接串时被拒绝。
+- **V6**：正常启动 `web`，健康检查通过；web 环境中没有任何 DB 变量。
+- **V7**：secret 扫描：临时密码不出现在任何证据、脚本、仓库文件或 checkpoint 中。
+- **V8**：清理：
+  - 只按确切的临时 project 名和 label 删除其容器、网络、匿名/临时 volume 和临时镜像，不使用 prune；
+  - V5 写入的 fixture 数据随临时 volume 一起删除；
+  - 前后快照一致；`errlog-dev` 与 `errlog-dev_pgdata` 状态不变。
+- 本地 gate：
+  - `node --test test/`；
+  - `openspec validate --strict`；
+  - scope gate：diff 只落在允许路径内。
+- 独立 reviewer PASS → implementation handoff Codex PASS。
+
+## Rollback approach
+回退方式是 revert 本 stage 的 commit：新增文件加少量文本修改，没有 schema 或依赖变更。seed 写入的只是 dev 数据库里的合成数据；临时验证库在 V8 删除；用户自己的开发库如何处理由用户决定，本 stage 不提供删除命令。
+
+## Open questions
+Q1、Q2 见下方，各附推荐项。它们仍待用户选择，推荐项不视为已批准。用户批准本合同时须明确给出 Q1、Q2 的选择；选择记录在 checkpoint 中。旧 Q3、Q4 已被 P1(15) 消除。
+````
 
 Last updated: 2026-10-14. Checkpoint:
 - P1(1): Consistent — landed, `openspec validate --strict` passed.

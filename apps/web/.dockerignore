@@ -4,3 +4,4 @@ node_modules
 Dockerfile
 .dockerignore
 npm-debug.log*
+db/seed

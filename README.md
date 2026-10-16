@@ -107,3 +107,32 @@ above) and rolls back everything it writes:
 ```bash
 docker compose -p <name> run --rm --no-deps -e ERRLOG_SCHEMA_TEST_DATABASE_URL web npm run test:db
 ```
+
+### Dev seed
+
+`apps/web/db/seed/dev-seed.mjs` inserts one synthetic local-dev fixture identity: one
+User (Identity provider `dev-seed`, identifier `dev-parent@example.test`) with one Child
+(`Dev Child`) set as its current Child. It is test data for local development only,
+used later as the caller context of task 2.5 and as the labeled pre-journey
+precondition of task 4.1. It is not an allowlist entry, not a login path, and not a
+production auth path. The `web` image does not contain it (`.dockerignore`), so mount
+the directory read-only into a one-off `web` container. It reads only
+`ERRLOG_DEV_SEED_DATABASE_URL`, passed by name like above, and needs an
+already-migrated database:
+
+```bash
+export ERRLOG_DEV_SEED_DATABASE_URL="postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres"
+docker compose run --rm --no-deps -v "$PWD/apps/web/db/seed:/app/db/seed:ro" -e ERRLOG_DEV_SEED_DATABASE_URL web npm run db:seed:dev
+unset ERRLOG_DEV_SEED_DATABASE_URL
+```
+
+It prints `created` the first time and `existing` afterwards, without changing
+anything. A partial or altered fixture is reported as inconsistent and left untouched.
+There is no command that deletes the fixture.
+
+`npm run test:dev-seed` tests it. Like `test:db`, run it only in a separate Compose
+project, with `ERRLOG_SCHEMA_TEST_DATABASE_URL` and the same read-only mount:
+
+```bash
+docker compose -p <name> run --rm --no-deps -v "$PWD/apps/web/db/seed:/app/db/seed:ro" -e ERRLOG_SCHEMA_TEST_DATABASE_URL web npm run test:dev-seed
+```

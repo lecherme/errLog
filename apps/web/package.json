@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "db:migrate": "node-pg-migrate up -m db/migrations",
-    "test:db": "node --test db/tests/schema-constraints.test.mjs"
+    "test:db": "node --test db/tests/schema-constraints.test.mjs",
+    "db:seed:dev": "node db/seed/dev-seed.mjs",
+    "test:dev-seed": "node --test db/seed/dev-seed.test.mjs"
   },
   "dependencies": {
     "next": "16.4.0",
