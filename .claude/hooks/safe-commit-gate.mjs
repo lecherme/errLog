@@ -29,14 +29,18 @@ if (typeof command !== 'string') {
 
 const requestPath = String.raw`\.git/safe-commit/requests/[A-Za-z0-9._-]+\.json`;
 const planId = String.raw`[0-9a-f]{64}`;
+// push is canonical only with the reviewed endpoint hash and full target ref.
+const targetRef = String.raw`refs/heads/[A-Za-z0-9._/-]+`;
 const canonical = new RegExp(
-  String.raw`^\s*node tools/safe-commit\.mjs (?:(check) --request (${requestPath})|(inspect|commit|push) --plan (${planId})) --json\s*$`,
+  String.raw`^\s*node tools/safe-commit\.mjs (?:(check) --request (${requestPath})|(inspect|commit|verify-push) --plan (${planId})|(push) --plan (${planId}) --endpoint-sha256 [0-9a-f]{64} --target-ref (${targetRef})) --json\s*$`,
   'u',
 ).exec(command);
 
-if (canonical) {
-  const action = canonical[1] ?? canonical[3];
-  if (action === 'commit' || action === 'push') {
+if (canonical && !canonical[7]?.includes('..')) {
+  const action = canonical[1] ?? canonical[3] ?? canonical[5];
+  if (action === 'verify-push') {
+    respond('ask', 'Explicit user approval is required before safe-commit verify-push; it is a recovery step, not a push approval');
+  } else if (action === 'commit' || action === 'push') {
     respond('ask', `Explicit user approval is required before safe-commit ${action}`);
   }
   process.exit(0);

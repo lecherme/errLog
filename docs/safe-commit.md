@@ -34,10 +34,19 @@ The machine-readable schema is `docs/safe-commit-request.schema.json`.
 2. Run `node tools/safe-commit.mjs check --request request.json --json`.
 3. Show the returned plan, including unrelated changes that will be ignored.
 4. After explicit approval, run `node tools/safe-commit.mjs commit --plan PLAN_ID --json`.
-5. Add `--push` only when the repository policy permits it. If commit succeeds but
-   push fails, retry only the push with
-   `node tools/safe-commit.mjs push --plan PLAN_ID --json`. This retry is valid only
-   while the current branch and HEAD still identify that plan's safe-commit commit.
+5. After a separate, explicit push approval, run the guarded push (see "Guarded push"):
+   `node tools/safe-commit.mjs push --plan PLAN_ID --endpoint-sha256 HASH --target-ref refs/heads/BRANCH --json`.
+   Once Git has been invoked, a failed push keeps its `attempted` record, because the
+   remote may have received the commit before the transport failed. A retry therefore
+   needs `verify-push` first (separately approved): it either completes the push record
+   or clears the attempt when the remote still holds the previous commit. Only then can
+   the same command run again, while the current branch and HEAD still identify that
+   plan's safe-commit commit; under the delivery gate the retry also goes through a
+   `push_retry` record, its Codex review, and a new user approval.
+
+`commit` never pushes: any `--push` argument to `commit` fails with `COMMIT_PUSH_REMOVED`
+(exit 2) before the plan is read, the index is touched, or a commit is created. Commit
+and push are always two commands with two separate approvals.
 
 The harness must not replace this flow with broad Git mutations such as `git add .`,
 an unscoped `git add -A`, amend, force-push, or an implicit multi-branch push.
@@ -86,8 +95,25 @@ with exit code 3 and symbolic code `UNSUPPORTED_GIT`.
 
 Exit code 15 uses `UPSTREAM_MISSING` when no pushable upstream is configured and
 `PUSH_FAILED` for a rejected or transport-failed push. Configure an upstream before
-retrying the former; the latter can be retried directly. Exit code 7 similarly uses
-`FILE_IGNORED` or `FILE_UNCHANGED`.
+retrying the former. The latter keeps its push attempt: run the separately approved
+`verify-push` before any retry (under the delivery gate also a `push_retry` record, its
+Codex review, and a new user approval). Exit code 7 similarly uses
+`FILE_IGNORED` or `FILE_UNCHANGED`. The other push codes are listed under "Guarded push".
+
+`inspect` additionally returns `binding`, the non-secret plan facts that the delivery
+handoff (`tools/stage-handoff.mjs --channel delivery`) binds:
+
+```text
+binding: { head, policyHash, indexEntries: [{ path, mode, hash }], approvedTree,
+           endpoint: { sha256 | null, error: <code> | null },
+           push: null | { state: attempted | pushed | verified, endpointSha256,
+                          targetRef, commitSha, trackingRef, remoteSha | null },
+           clearedAttempts: <number of push attempts verify-push cleared> }
+```
+
+`approvedTree` is `null` before commit. `endpoint` is resolved live from the branch's
+upstream remote configuration, without network access. `binding` never contains the
+repository, worktree or plan paths, Git output, or a URL.
 
 ## Repository policy
 
@@ -98,7 +124,74 @@ intentionally: policy/version mismatches fail closed instead of silently weakeni
 enforcement.
 
 Push is an explicit opt-in. It targets only the current branch's configured upstream
-using an explicit `HEAD:refs/heads/...` refspec and never force-pushes.
+and never force-pushes.
+
+## Guarded push
+
+`push` requires both `--endpoint-sha256` (the SHA-256 of the reviewed push endpoint) and
+`--target-ref` (the reviewed full `refs/heads/<branch>`). Without either it fails with
+`ENDPOINT_HASH_REQUIRED` (exit 2); a malformed value fails with `USAGE`. Both values come
+from the Codex-reviewed push-ready delivery record. Only for the H3 bootstrap, or when the
+user has explicitly waived the delivery review, do they come from `inspect`'s
+`binding.endpoint.sha256` and the upstream's full merge ref, shown to the user with the
+push approval request.
+
+Under the worktree lock, after the HEAD and approved-tree checks, and before any network
+I/O, push:
+
+1. checks the target ref with `git check-ref-format`, and refuses a protected branch
+   (`PROTECTED_BRANCH`, also when the configured upstream was changed to one);
+2. requires `branch.<b>.merge` to equal the target ref (`PUSH_TARGET_CHANGED`) and the
+   upstream tracking ref to be `refs/remotes/<remote>/<branch>` (`UNSUPPORTED_UPSTREAM`);
+3. resolves the single push endpoint (below) and compares its hash with
+   `--endpoint-sha256` (`PUSH_ENDPOINT_CHANGED`);
+4. records `push.state: attempted`, then pushes `<commit>:<target-ref>` to the resolved
+   URL itself, so Git never looks the remote up again;
+5. as soon as Git reports success, records `pushed: true` and `push.state: pushed`;
+6. updates the local tracking ref from its previous value, then reads the target ref back
+   from the same endpoint with `ls-remote` and records `remoteSha` and `push.state: verified`.
+
+A refusal in steps 1–3 happens before any network I/O and leaves the plan unpushed. Once
+step 4 has recorded the attempt, a push that Git reports as failed (`PUSH_FAILED`) keeps
+`push.state: attempted`: a transport can fail after the remote updated its ref, so the
+outcome is unknown. A failure in step 6 leaves `push.state: pushed` with
+`TRACKING_REF_UPDATE_FAILED`, `REMOTE_UNVERIFIED` or `REMOTE_MISMATCH`. None of these
+retries the push. A plan in `attempted` state (a failed or interrupted push) is refused
+with `PUSH_OUTCOME_UNKNOWN`; a pushed plan that is not yet verified returns
+`PUSH_VERIFICATION_PENDING`. Both are resolved only with `verify-push`.
+
+### Push endpoints
+
+The endpoint is `git remote get-url --push --all <remote>` (which applies `pushurl`,
+`insteadOf` and `pushInsteadOf`). Exactly one is required: none (including remote `.`)
+is `NO_PUSH_ENDPOINT`, more than one is `MULTIPLE_PUSH_ENDPOINTS`. Supported forms are
+`ssh://`, `https://` and scp-like `[user@]host:path`. Local paths and `file://` are
+`LOCAL_PUSH_ENDPOINT`; other forms (`http://`, `git://`, `ext::` and so on), and an
+endpoint that a URL rewrite rule would rewrite again, are `UNSUPPORTED_PUSH_ENDPOINT`. Any
+https userinfo, or a password in an ssh or scp-like endpoint, is `CREDENTIAL_IN_ENDPOINT`.
+The hash is SHA-256 of `errlog-push-endpoint/v1` NUL `<url bytes>` NUL.
+
+The URL stays inside the safe-commit process and is passed to Git only as an argument.
+Push and `verify-push` errors carry only a code, a fixed message, `commitSha` and
+`gitExitCode`: Git's stdout and stderr, which can contain the URL, are never output or
+stored. Network calls disable terminal prompts.
+
+### verify-push
+
+`node tools/safe-commit.mjs verify-push --plan PLAN_ID --json` is a recovery command with
+its own approval; it is not a push approval and never runs `git push`. Under the lock it
+first checks that the recorded endpoint hash and target ref still match the configuration
+(no network otherwise), then reads the target ref from the endpoint:
+
+- `pushed`: if the remote holds the commit, it moves the tracking ref from its previous
+  value (or leaves it if already there) and records `verified`; a tracking ref at any other
+  commit is `TRACKING_REF_CONFLICT`, a different remote commit is `REMOTE_MISMATCH`.
+- `attempted`: if the remote holds the commit, it records `pushed: true` and continues as
+  above; if the remote still holds the previous commit, it clears the attempt, increments
+  `clearedAttempts`, and the plan is unpushed again; otherwise `REMOTE_MISMATCH`. The
+  delivery channel treats any increase of `clearedAttempts` as voiding the earlier push
+  review, so a new push needs a new `push_retry` record, Codex review, and approval.
+- `verified`: nothing changes.
 
 ## Lock recovery
 

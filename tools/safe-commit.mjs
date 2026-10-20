@@ -128,20 +128,32 @@ async function git(repoRoot, args, options = {}) {
 
 function parseArgs(argv) {
   const action = argv[0];
-  if (!['check', 'inspect', 'commit', 'push'].includes(action)) {
-    fail(EXIT.USAGE, 'USAGE', 'Expected one of: check, inspect, commit, push');
+  if (!['check', 'inspect', 'commit', 'push', 'verify-push'].includes(action)) {
+    fail(EXIT.USAGE, 'USAGE', 'Expected one of: check, inspect, commit, push, verify-push');
   }
-  const options = { action, json: false, push: false };
+  // Commit and push are separately approved commands; no form of commit may push.
+  if (action === 'commit' && argv.some((arg) => /^--push(?:=|$)/u.test(arg))) {
+    fail(EXIT.USAGE, 'COMMIT_PUSH_REMOVED', 'commit --push was removed; push is a separate, separately approved command');
+  }
+  const options = { action, json: false };
   for (let index = 1; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '--json') options.json = true;
-    else if (arg === '--push' && action === 'commit') options.push = true;
     else if (arg === '--request' && action === 'check' && argv[index + 1]) options.request = argv[++index];
     else if (arg === '--plan' && action !== 'check' && argv[index + 1]) options.planId = argv[++index];
+    else if (arg === '--endpoint-sha256' && action === 'push' && argv[index + 1]) options.endpointSha256 = argv[++index];
+    else if (arg === '--target-ref' && action === 'push' && argv[index + 1]) options.targetRef = argv[++index];
     else fail(EXIT.USAGE, 'USAGE', `Unknown or incomplete option: ${arg}`);
   }
   if (action === 'check' && !options.request) fail(EXIT.USAGE, 'USAGE', 'check requires --request <file>');
   if (action !== 'check' && !options.planId) fail(EXIT.USAGE, 'USAGE', `${action} requires --plan <plan-id>`);
+  if (action === 'push') {
+    if (options.endpointSha256 === undefined || options.targetRef === undefined) {
+      fail(EXIT.USAGE, 'ENDPOINT_HASH_REQUIRED', 'push requires --endpoint-sha256 <hash> and --target-ref refs/heads/<branch> from the reviewed push-ready record');
+    }
+    if (!/^[0-9a-f]{64}$/u.test(options.endpointSha256)) fail(EXIT.USAGE, 'USAGE', '--endpoint-sha256 must be 64 lowercase hexadecimal characters');
+    if (!options.targetRef.startsWith('refs/heads/')) fail(EXIT.USAGE, 'USAGE', '--target-ref must be a full refs/heads/<branch> ref');
+  }
   return options;
 }
 
@@ -715,29 +727,179 @@ async function verifyCommittedTree(repo, plan, commitSha = plan.commitSha) {
   }
   return committedTree;
 }
-async function pushCommittedPlan(repo, plan, policy) {
+// The single effective push endpoint of a remote. The URL stays in this process and is only
+// ever passed to git as an argument; callers and outputs see its hash or an error code.
+const ENDPOINT_HASH_HEADER = 'errlog-push-endpoint/v1';
+
+function endpointSha256(url) {
+  return sha256(Buffer.concat([Buffer.from(`${ENDPOINT_HASH_HEADER}\0`, 'utf8'), Buffer.from(url, 'utf8'), Buffer.from('\0', 'utf8')]));
+}
+
+function classifyEndpoint(url) {
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//u.exec(url)?.[1].toLowerCase();
+  if (url.startsWith('-') || /[\s\0]/u.test(url)) return 'UNSUPPORTED_PUSH_ENDPOINT';
+  if (scheme === 'file') return 'LOCAL_PUSH_ENDPOINT';
+  if (scheme === 'ssh' || scheme === 'https') {
+    let parsed;
+    try { parsed = new URL(url); } catch { return 'UNSUPPORTED_PUSH_ENDPOINT'; }
+    if (!parsed.hostname) return 'UNSUPPORTED_PUSH_ENDPOINT';
+    if (parsed.password || (scheme === 'https' && parsed.username) || url.slice(scheme.length + 3).split('/')[0].includes(':@')) {
+      return 'CREDENTIAL_IN_ENDPOINT';
+    }
+    return null;
+  }
+  if (scheme || url.includes('::')) return 'UNSUPPORTED_PUSH_ENDPOINT';
+  // scp-like [user@]host:path needs a colon before the first slash; otherwise it is a local path.
+  const head = url.split('/')[0];
+  const at = head.lastIndexOf('@');
+  const colon = head.indexOf(':', at + 1);
+  if (colon === -1) return 'LOCAL_PUSH_ENDPOINT';
+  if (colon === at + 1) return 'UNSUPPORTED_PUSH_ENDPOINT';
+  return head.slice(0, Math.max(at, 0)).includes(':') ? 'CREDENTIAL_IN_ENDPOINT' : null;
+}
+
+async function resolvePushEndpoint(repo, remote) {
+  const refuse = (kind, message) => fail(EXIT.PUSH_FAILED, kind, message);
+  if (!remote || remote === '.') refuse('NO_PUSH_ENDPOINT', 'The upstream remote has no push endpoint');
+  const result = await run('git', ['remote', 'get-url', '--push', '--all', '--', remote], { cwd: repo.root });
+  const urls = result.code === 0 ? result.stdout.toString('utf8').split('\n').filter((line) => line !== '') : [];
+  if (urls.length === 0) refuse('NO_PUSH_ENDPOINT', 'The upstream remote has no push endpoint');
+  if (urls.length > 1) refuse('MULTIPLE_PUSH_ENDPOINTS', 'The upstream remote has more than one push endpoint');
+  const [url] = urls;
+  const problem = classifyEndpoint(url);
+  if (problem === 'LOCAL_PUSH_ENDPOINT') refuse(problem, 'Local push endpoints are not supported');
+  if (problem === 'CREDENTIAL_IN_ENDPOINT') refuse(problem, 'The push endpoint carries credentials');
+  if (problem) refuse(problem, 'The push endpoint form is not supported');
+  // The URL is passed to git as-is, so no rewrite rule may apply to it a second time.
+  const rewrites = await run('git', ['config', '-z', '--get-regexp', '^url\\..*\\.(insteadof|pushinsteadof)$'], { cwd: repo.root });
+  if (rewrites.code === 0) {
+    for (const item of rewrites.stdout.toString('utf8').split('\0').filter(Boolean)) {
+      const value = item.slice(item.indexOf('\n') + 1);
+      if (value && url.startsWith(value)) refuse('UNSUPPORTED_PUSH_ENDPOINT', 'The push endpoint would be rewritten again by Git');
+    }
+  }
+  return { url, sha256: endpointSha256(url) };
+}
+
+async function endpointBinding(repo, branch) {
+  const remote = await git(repo.root, ['config', '--get', `branch.${branch}.remote`], { allowFailure: true });
+  if (!remote) return { sha256: null, error: 'UPSTREAM_MISSING' };
+  try {
+    return { sha256: (await resolvePushEndpoint(repo, remote)).sha256, error: null };
+  } catch (error) {
+    if (error instanceof SafeCommitError) return { sha256: null, error: error.kind };
+    throw error;
+  }
+}
+
+// Push and verify-push report only codes, fixed messages, the commit and Git's exit code:
+// Git's own stdout and stderr can contain the endpoint URL and are never forwarded.
+async function pushGit(repo, plan, args, kind, message) {
+  const result = await run('git', args, { cwd: repo.root, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+  if (result.code !== 0) fail(EXIT.PUSH_FAILED, kind, message, { commitSha: plan.commitSha, gitExitCode: result.code });
+  return result.stdout.toString('utf8');
+}
+
+async function readRef(repo, ref) {
+  const result = await run('git', ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], { cwd: repo.root });
+  return result.code === 0 ? result.stdout.toString('utf8').trim() : null;
+}
+
+async function remoteRef(repo, plan, url, targetRef) {
+  const output = await pushGit(repo, plan, ['ls-remote', '--refs', url, targetRef], 'REMOTE_UNVERIFIED',
+    'The pushed commit could not be read back from the push endpoint; run verify-push');
+  const line = output.split('\n').find((item) => item.split('\t')[1] === targetRef);
+  return line ? line.split('\t')[0] : null;
+}
+
+async function updateTrackingRef(repo, plan, from) {
+  const zero = '0'.repeat(plan.commitSha.length);
+  await pushGit(repo, plan, ['update-ref', plan.push.trackingRef, plan.commitSha, from ?? zero], 'TRACKING_REF_UPDATE_FAILED',
+    'The remote received the commit but the local tracking ref was not updated; run verify-push');
+}
+
+// Before any network I/O: the reviewed target ref and endpoint must still be what the
+// current configuration resolves to.
+async function boundTarget(repo, plan, policy, targetRef, expectedEndpoint) {
+  const checked = await run('git', ['check-ref-format', targetRef], { cwd: repo.root });
+  if (checked.code !== 0 || !targetRef.startsWith('refs/heads/')) fail(EXIT.USAGE, 'USAGE', '--target-ref is not a valid refs/heads/<branch> ref');
+  const isProtected = (ref) => policy.protectedBranches.includes(ref.slice('refs/heads/'.length));
+  if (isProtected(targetRef)) fail(EXIT.POLICY_DENIED, 'PROTECTED_BRANCH', 'The target branch is protected');
+  const remote = await git(repo.root, ['config', '--get', `branch.${plan.branch}.remote`], { allowFailure: true });
+  const mergeRef = await git(repo.root, ['config', '--get', `branch.${plan.branch}.merge`], { allowFailure: true });
+  if (!remote || !mergeRef?.startsWith('refs/heads/') || remote === '.') {
+    fail(EXIT.PUSH_FAILED, 'UPSTREAM_MISSING', `Branch ${plan.branch} has no pushable upstream`, { commitSha: plan.commitSha });
+  }
+  if (mergeRef !== targetRef) {
+    if (isProtected(mergeRef)) fail(EXIT.POLICY_DENIED, 'PROTECTED_BRANCH', 'The configured upstream branch is protected');
+    fail(EXIT.PUSH_FAILED, 'PUSH_TARGET_CHANGED', 'The configured upstream branch differs from the reviewed target ref');
+  }
+  const trackingRef = `refs/remotes/${remote}/${targetRef.slice('refs/heads/'.length)}`;
+  const upstream = await run('git', ['rev-parse', '--symbolic-full-name', `${plan.branch}@{upstream}`], { cwd: repo.root });
+  if (upstream.code !== 0 || upstream.stdout.toString('utf8').trim() !== trackingRef) {
+    fail(EXIT.PUSH_FAILED, 'UNSUPPORTED_UPSTREAM', 'The upstream tracking ref is not refs/remotes/<remote>/<branch>');
+  }
+  const endpoint = await resolvePushEndpoint(repo, remote);
+  if (endpoint.sha256 !== expectedEndpoint) fail(EXIT.PUSH_FAILED, 'PUSH_ENDPOINT_CHANGED', 'The push endpoint differs from the reviewed endpoint');
+  return { url: endpoint.url, trackingRef };
+}
+
+async function guardedPush(repo, plan, policy, options) {
   if (!policy.allowPush) fail(EXIT.PUSH_DENIED, 'PUSH_DENIED', 'Push is disabled by repository policy');
   const identity = await currentIdentity(repo);
   if (identity.branch !== plan.branch || identity.head !== plan.commitSha) {
     fail(EXIT.PLAN_STALE, 'HEAD_CHANGED', 'Current branch/HEAD no longer matches the committed plan');
   }
   await verifyCommittedTree(repo, plan);
-  const remote = await git(repo.root, ['config', '--get', `branch.${plan.branch}.remote`], { allowFailure: true });
-  const mergeRef = await git(repo.root, ['config', '--get', `branch.${plan.branch}.merge`], { allowFailure: true });
-  if (!remote || !mergeRef?.startsWith('refs/heads/') || remote === '.') {
-    fail(EXIT.PUSH_FAILED, 'UPSTREAM_MISSING', `Branch ${plan.branch} has no pushable upstream`, { commitSha: plan.commitSha });
-  }
-  const result = await run('git', ['push', '--porcelain', '--', remote, `HEAD:${mergeRef}`], { cwd: repo.root });
-  if (result.code !== 0) {
-    fail(EXIT.PUSH_FAILED, 'PUSH_FAILED', 'Commit succeeded but push failed; retry with push --plan', {
-      commitSha: plan.commitSha,
-      stderr: result.stderr.toString('utf8').trim(),
-      gitExitCode: result.code,
-    });
-  }
+  const { url, trackingRef } = await boundTarget(repo, plan, policy, options.targetRef, options.endpointSha256);
+  plan.push = {
+    state: 'attempted',
+    endpointSha256: options.endpointSha256,
+    targetRef: options.targetRef,
+    commitSha: plan.commitSha,
+    trackingRef,
+    trackingBefore: await readRef(repo, trackingRef),
+    remoteSha: null,
+    attemptedAt: new Date().toISOString(),
+  };
+  await savePlan(repo, plan);
+  // A transport can fail after the remote already updated its ref, so a failed push keeps
+  // the attempted record: only verify-push can tell whether the remote received the commit.
+  await pushGit(repo, plan, ['push', '--porcelain', '--', url, `${plan.commitSha}:${options.targetRef}`], 'PUSH_FAILED',
+    'Push failed and its effect on the remote is unknown; run verify-push before any retry');
+  // The remote changed: persist that before any local verification can fail.
   plan.pushed = true;
   plan.pushedAt = new Date().toISOString();
+  plan.push.state = 'pushed';
   await savePlan(repo, plan);
+  await updateTrackingRef(repo, plan, plan.push.trackingBefore);
+  await completeVerification(repo, plan, url);
+}
+
+async function completeVerification(repo, plan, url) {
+  const remoteSha = await remoteRef(repo, plan, url, plan.push.targetRef);
+  plan.push.remoteSha = remoteSha;
+  if (remoteSha !== plan.commitSha) {
+    await savePlan(repo, plan);
+    fail(EXIT.PUSH_FAILED, 'REMOTE_MISMATCH', 'The push endpoint does not hold the pushed commit', { commitSha: plan.commitSha });
+  }
+  plan.push.state = 'verified';
+  plan.push.verifiedAt = new Date().toISOString();
+  await savePlan(repo, plan);
+}
+
+function pushBinding(plan) {
+  if (!plan.push) return null;
+  const { state, endpointSha256: endpoint, targetRef, commitSha, trackingRef, remoteSha } = plan.push;
+  return { state, endpointSha256: endpoint, targetRef, commitSha, trackingRef, remoteSha };
+}
+
+function sanitizePushError(error) {
+  if (error instanceof SafeCommitError && error.details && typeof error.details === 'object') {
+    const { commitSha, gitExitCode } = error.details;
+    error.details = Object.fromEntries(Object.entries({ commitSha, gitExitCode }).filter(([, value]) => value !== undefined));
+  }
+  return error;
 }
 
 async function commit(repo, options) {
@@ -747,10 +909,7 @@ async function commit(repo, options) {
   let staged = false;
   let hookRun;
   try {
-    const policy = await verifyPlan(repo, plan);
-    if (options.push && !policy.allowPush) {
-      fail(EXIT.PUSH_DENIED, 'PUSH_DENIED', 'Push is disabled by repository policy');
-    }
+    await verifyPlan(repo, plan);
     for (const file of plan.request.files) {
       const result = await run('git', ['add', '-A', '--', file], { cwd: repo.root });
       if (result.code !== 0) fail(EXIT.COMMIT_FAILED, 'STAGE_FAILED', `Unable to stage ${file}`, { stderr: result.stderr.toString('utf8').trim() });
@@ -787,13 +946,6 @@ async function commit(repo, options) {
     plan.committedAt = new Date().toISOString();
     await savePlan(repo, plan);
     await verifyCommittedTree(repo, plan);
-    if (options.push) {
-      try { await pushCommittedPlan(repo, plan, policy); }
-      catch (error) {
-        if (error instanceof SafeCommitError) error.result = baseOutput('commit', plan);
-        throw error;
-      }
-    }
     return baseOutput('commit', plan);
   } catch (error) {
     if (error instanceof SafeCommitError && !error.result) error.result = baseOutput('commit', plan);
@@ -805,24 +957,92 @@ async function commit(repo, options) {
   }
 }
 
+function ensureCommittedPlan(repo, plan) {
+  if (plan.repo.commonDir !== repo.commonDir || plan.repo.worktree !== repo.rootReal || plan.repo.gitDir !== repo.gitDir) {
+    fail(EXIT.PLAN_STALE, 'PLAN_REPOSITORY_CHANGED', 'Plan belongs to a different repository or worktree');
+  }
+  if (plan.state !== 'committed' || !plan.commitSha) fail(EXIT.PLAN_CONSUMED, 'PLAN_NOT_COMMITTED', 'Plan does not contain a completed commit');
+}
+
 async function pushPlan(repo, options) {
-  const plan = await loadPlan(repo, options.planId);
+  let plan = await loadPlan(repo, options.planId);
   try {
-    if (plan.repo.commonDir !== repo.commonDir || plan.repo.worktree !== repo.rootReal || plan.repo.gitDir !== repo.gitDir) {
-      fail(EXIT.PLAN_STALE, 'PLAN_REPOSITORY_CHANGED', 'Plan belongs to a different repository or worktree');
-    }
-    if (plan.state !== 'committed' || !plan.commitSha) fail(EXIT.PLAN_CONSUMED, 'PLAN_NOT_COMMITTED', 'Plan does not contain a completed commit');
-    if (plan.pushed) return baseOutput('push', plan);
+    ensureCommittedPlan(repo, plan);
     const { policy, hash: policyHash } = await loadPolicy(repo);
     if (policyHash !== plan.policyHash) fail(EXIT.PLAN_STALE, 'POLICY_CHANGED', 'Repository policy changed after check');
     const release = await acquireLock(repo, policy.planTtlMinutes);
     try {
-      await pushCommittedPlan(repo, plan, policy);
+      plan = await loadPlan(repo, options.planId);
+      if (plan.push?.state === 'attempted') {
+        fail(EXIT.PUSH_FAILED, 'PUSH_OUTCOME_UNKNOWN', 'An earlier push was interrupted; run verify-push before pushing again');
+      }
+      if (plan.pushed) {
+        if (plan.push && plan.push.state !== 'verified') {
+          fail(EXIT.PUSH_FAILED, 'PUSH_VERIFICATION_PENDING', 'The commit was pushed but not verified; run verify-push');
+        }
+        return baseOutput('push', plan);
+      }
+      await guardedPush(repo, plan, policy, options);
       return baseOutput('push', plan);
     } finally { await release(); }
   } catch (error) {
     if (error instanceof SafeCommitError && !error.result) error.result = baseOutput('push', plan);
-    throw error;
+    throw sanitizePushError(error);
+  }
+}
+
+// Recovery after a push whose verification failed or whose outcome is unknown. It reads the
+// remote and reconciles the local tracking ref and plan, and never runs git push.
+async function verifyPushPlan(repo, options) {
+  let plan = await loadPlan(repo, options.planId);
+  try {
+    ensureCommittedPlan(repo, plan);
+    if (!plan.push) fail(EXIT.PLAN_CONSUMED, 'NO_PUSH_RECORD', 'The plan has no guarded push to verify');
+    const { policy } = await loadPolicy(repo);
+    const release = await acquireLock(repo, policy.planTtlMinutes);
+    try {
+      plan = await loadPlan(repo, options.planId);
+      if (!plan.push) fail(EXIT.PLAN_CONSUMED, 'NO_PUSH_RECORD', 'The plan has no guarded push to verify');
+      if (plan.push.state === 'verified') return baseOutput('verify-push', plan);
+      const { url, trackingRef } = await boundTarget(repo, plan, policy, plan.push.targetRef, plan.push.endpointSha256);
+      if (trackingRef !== plan.push.trackingRef) fail(EXIT.PUSH_FAILED, 'PUSH_TARGET_CHANGED', 'The upstream tracking ref differs from the recorded one');
+      const remoteSha = await remoteRef(repo, plan, url, plan.push.targetRef);
+      if (plan.push.state === 'attempted') {
+        if (remoteSha === plan.push.trackingBefore && remoteSha !== plan.commitSha) {
+          // The interrupted push never reached the remote; a new push needs a new approval.
+          // The count is durable evidence that any earlier push review no longer applies.
+          delete plan.push;
+          plan.clearedAttempts = (plan.clearedAttempts ?? 0) + 1;
+          await savePlan(repo, plan);
+          return baseOutput('verify-push', plan);
+        }
+        if (remoteSha !== plan.commitSha) {
+          fail(EXIT.PUSH_FAILED, 'REMOTE_MISMATCH', 'The push endpoint holds neither the pushed commit nor the previous one', { commitSha: plan.commitSha });
+        }
+        plan.pushed = true;
+        plan.pushedAt = new Date().toISOString();
+        plan.push.state = 'pushed';
+        await savePlan(repo, plan);
+      }
+      if (remoteSha !== plan.commitSha) {
+        fail(EXIT.PUSH_FAILED, 'REMOTE_MISMATCH', 'The push endpoint does not hold the pushed commit', { commitSha: plan.commitSha });
+      }
+      const tracking = await readRef(repo, plan.push.trackingRef);
+      if (tracking !== plan.commitSha) {
+        if (tracking !== plan.push.trackingBefore) {
+          fail(EXIT.PUSH_FAILED, 'TRACKING_REF_CONFLICT', 'The local tracking ref moved to an unexpected commit', { commitSha: plan.commitSha });
+        }
+        await updateTrackingRef(repo, plan, tracking);
+      }
+      plan.push.remoteSha = remoteSha;
+      plan.push.state = 'verified';
+      plan.push.verifiedAt = new Date().toISOString();
+      await savePlan(repo, plan);
+      return baseOutput('verify-push', plan);
+    } finally { await release(); }
+  } catch (error) {
+    if (error instanceof SafeCommitError && !error.result) error.result = baseOutput('verify-push', plan);
+    throw sanitizePushError(error);
   }
 }
 
@@ -831,7 +1051,18 @@ async function inspect(repo, options) {
   if (plan.repo.commonDir !== repo.commonDir || plan.repo.worktree !== repo.rootReal || plan.repo.gitDir !== repo.gitDir) {
     fail(EXIT.PLAN_STALE, 'PLAN_REPOSITORY_CHANGED', 'Plan belongs to a different repository or worktree');
   }
-  return baseOutput('inspect', plan);
+  return {
+    ...baseOutput('inspect', plan),
+    binding: {
+      head: plan.head,
+      policyHash: plan.policyHash,
+      indexEntries: plan.indexEntries ?? [],
+      approvedTree: plan.approvedTree ?? null,
+      endpoint: await endpointBinding(repo, plan.branch),
+      push: pushBinding(plan),
+      clearedAttempts: plan.clearedAttempts ?? 0,
+    },
+  };
 }
 
 function human(result) {
@@ -863,6 +1094,7 @@ async function main() {
     if (options.action === 'check') result = await check(repo, options);
     else if (options.action === 'inspect') result = await inspect(repo, options);
     else if (options.action === 'commit') result = await commit(repo, options);
+    else if (options.action === 'verify-push') result = await verifyPushPlan(repo, options);
     else result = await pushPlan(repo, options);
     process.stdout.write(`${options.json ? JSON.stringify(result) : human(result)}\n`);
   } catch (error) {

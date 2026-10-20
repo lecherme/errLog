@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
@@ -86,6 +86,112 @@ async function cli(repo, ...args) {
 async function check(repo, files = ['tracked.txt'], overrides = {}) {
   const requestFile = await request(repo, { files, ...overrides });
   return await cli(repo, 'check', '--request', requestFile);
+}
+
+const ANY_HASH = 'f'.repeat(64);
+const guards = (hash, targetRef = 'refs/heads/feature') => ['--endpoint-sha256', hash, '--target-ref', targetRef];
+const endpointHash = (url) => createHash('sha256').update(Buffer.concat([
+  Buffer.from('errlog-push-endpoint/v1\0', 'utf8'), Buffer.from(url, 'utf8'), Buffer.from('\0', 'utf8'),
+])).digest('hex');
+const URL_SENTINEL = 'url-sentinel-4b7e';
+const CREDENTIAL_SENTINEL = 'credential-sentinel-9c2d';
+
+// Test-only ssh transport: ssh://git.example.invalid/<name>.git is served from a local bare
+// repo through GIT_SSH_COMMAND, so pushes never touch the network. Every call is logged; a
+// mode file makes the transport fail or kill the calling safe-commit process.
+const WRAPPER_SOURCE = `
+import { spawnSync } from 'node:child_process';
+import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+const fixture = process.env.SAFE_COMMIT_TEST_FIXTURE;
+const [host, cmd] = process.argv.slice(-2);
+const match = /^(git-receive-pack|git-upload-pack) '(.+)'$/.exec(cmd);
+if (!match || !host.endsWith('example.invalid')) process.exit(255);
+const service = match[1];
+const name = path.basename(match[2]);
+const mode = existsSync(path.join(fixture, 'mode')) ? readFileSync(path.join(fixture, 'mode'), 'utf8').trim() : '';
+appendFileSync(path.join(fixture, 'calls.log'), service + ' ' + name + '\\n');
+function killSafeCommit() {
+  for (let pid = process.ppid; pid > 1;) {
+    if (readFileSync('/proc/' + pid + '/cmdline', 'utf8').includes('safe-commit.mjs')) return process.kill(pid, 'SIGKILL');
+    pid = Number(readFileSync('/proc/' + pid + '/stat', 'utf8').split(') ')[1].split(' ')[1]);
+  }
+}
+if (mode === 'fail-all' || (mode === 'fail-upload' && service === 'git-upload-pack')) {
+  process.stderr.write('fatal: ${URL_SENTINEL} ${CREDENTIAL_SENTINEL} transport failed\\n');
+  process.stdout.write('${URL_SENTINEL} ${CREDENTIAL_SENTINEL}\\n');
+  process.exit(128);
+}
+if (mode === 'kill-before-receive' && service === 'git-receive-pack') {
+  killSafeCommit();
+  process.exit(128);
+}
+const result = spawnSync('git', [service.slice(4), path.join(fixture, 'remotes', name)], { stdio: 'inherit' });
+if (mode === 'kill-after-receive' && service === 'git-receive-pack' && result.status === 0) killSafeCommit();
+// The remote ref is updated, but the transport then fails before Git sees an acknowledgement.
+if (mode === 'fail-after-receive' && service === 'git-receive-pack') process.exit(128);
+process.exit(result.status ?? 1);
+`;
+
+async function remoteFixture(repo) {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), 'safe-commit-remote-'));
+  temporaryPaths.push(fixture);
+  await mkdir(path.join(fixture, 'remotes'));
+  await writeFile(path.join(fixture, 'wrapper.mjs'), WRAPPER_SOURCE);
+  await writeFile(path.join(fixture, 'calls.log'), '');
+  const env = {
+    ...process.env,
+    SAFE_COMMIT_TEST_FIXTURE: fixture,
+    GIT_SSH_COMMAND: `"${process.execPath}" "${path.join(fixture, 'wrapper.mjs')}"`,
+    GIT_SSH_VARIANT: 'simple',
+  };
+  const remoteDir = (name) => path.join(fixture, 'remotes', `${name}.git`);
+  const helper = {
+    env,
+    url: (name) => `ssh://git.example.invalid/${name}.git`,
+    remoteDir,
+    async bare(name) {
+      await git(fixture, 'init', '--bare', '-q', remoteDir(name));
+      return remoteDir(name);
+    },
+    async calls() {
+      return (await readFile(path.join(fixture, 'calls.log'), 'utf8')).split('\n').filter(Boolean);
+    },
+    async setMode(mode) {
+      await writeFile(path.join(fixture, 'mode'), mode);
+    },
+    async git(...args) {
+      const result = await command(repo, 'git', args, { env });
+      assert.equal(result.code, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+      return result.stdout.trim();
+    },
+    async cli(...args) {
+      return await cliWithOptions(repo, { env }, ...args);
+    },
+    async human(...args) {
+      return await command(repo, process.execPath, [CLI, ...args], { env });
+    },
+  };
+  await git(fixture, 'clone', '--bare', '-q', repo, remoteDir('origin'));
+  await git(repo, 'remote', 'add', 'origin', helper.url('origin'));
+  await helper.git('fetch', '-q', 'origin');
+  await git(repo, 'branch', `--set-upstream-to=origin/${await git(repo, 'branch', '--show-current')}`);
+  await writeFile(path.join(fixture, 'calls.log'), '');
+  return helper;
+}
+
+async function inspectPlan(repo, planId, env = process.env) {
+  const result = await cliWithOptions(repo, { env }, 'inspect', '--plan', planId);
+  assert.equal(result.code, 0, result.stdout);
+  return result.json;
+}
+
+async function committedPlan(repo) {
+  await writeFile(path.join(repo, 'tracked.txt'), 'v2\n');
+  const planned = await check(repo);
+  const committed = await cli(repo, 'commit', '--plan', planned.json.planId);
+  assert.equal(committed.code, 0, committed.stdout);
+  return { planId: planned.json.planId, commitSha: committed.json.commitSha };
 }
 
 after(async () => {
@@ -339,14 +445,15 @@ test('push policy denial occurs before commit and later push remains denied', as
   await writeFile(path.join(repo, 'tracked.txt'), 'v2\n');
   const planned = await check(repo);
   const denied = await cli(repo, 'commit', '--plan', planned.json.planId, '--push');
-  assert.equal(denied.code, 14);
+  assert.equal(denied.code, 2);
+  assert.equal(denied.json.errors[0].code, 'COMMIT_PUSH_REMOVED');
   assert.equal(denied.json.commitSha, null);
   assert.equal(await git(repo, 'rev-list', '--count', 'HEAD'), '1');
   const result = await cli(repo, 'commit', '--plan', planned.json.planId);
   assert.equal(result.code, 0);
   assert.equal(await git(repo, 'rev-list', '--count', 'HEAD'), '2');
   assert.equal((await cli(repo, 'commit', '--plan', planned.json.planId)).code, 11);
-  const retry = await cli(repo, 'push', '--plan', planned.json.planId);
+  const retry = await cli(repo, 'push', '--plan', planned.json.planId, ...guards(ANY_HASH));
   assert.equal(retry.code, 14);
   assert.equal(retry.json.commitSha, result.json.commitSha);
 });
@@ -356,17 +463,24 @@ test('missing upstream is distinct and push retry requires the committed plan at
   await writeFile(path.join(repo, 'tracked.txt'), 'v2\n');
   const planned = await check(repo);
 
-  const missing = await cli(repo, 'commit', '--plan', planned.json.planId, '--push');
+  const removed = await cli(repo, 'commit', '--plan', planned.json.planId, '--push');
+  assert.equal(removed.code, 2);
+  assert.equal(removed.json.errors[0].code, 'COMMIT_PUSH_REMOVED');
+  const committed = await cli(repo, 'commit', '--plan', planned.json.planId);
+  assert.equal(committed.code, 0);
+  assert.match(committed.json.commitSha, /^[a-f0-9]{40,64}$/);
+
+  const missing = await cli(repo, 'push', '--plan', planned.json.planId, ...guards(ANY_HASH));
   assert.equal(missing.code, 15);
   assert.equal(missing.json.errors[0].code, 'UPSTREAM_MISSING');
-  assert.match(missing.json.commitSha, /^[a-f0-9]{40,64}$/);
+  assert.equal(missing.json.commitSha, committed.json.commitSha);
 
-  const missingAgain = await cli(repo, 'push', '--plan', planned.json.planId);
+  const missingAgain = await cli(repo, 'push', '--plan', planned.json.planId, ...guards(ANY_HASH));
   assert.equal(missingAgain.code, 15);
   assert.equal(missingAgain.json.errors[0].code, 'UPSTREAM_MISSING');
 
   await git(repo, 'commit', '--allow-empty', '-m', 'test: advance head');
-  const stale = await cli(repo, 'push', '--plan', planned.json.planId);
+  const stale = await cli(repo, 'push', '--plan', planned.json.planId, ...guards(ANY_HASH));
   assert.equal(stale.code, 10);
   assert.equal(stale.json.errors[0].code, 'HEAD_CHANGED');
   assert.equal(stale.json.commitSha, missing.json.commitSha);
@@ -384,44 +498,82 @@ test('push rejects committed plans with a mismatched or missing approved tree', 
   stored.approvedTree = '0'.repeat(40);
   await writeFile(planFile, JSON.stringify(stored));
 
-  const mismatch = await cli(repo, 'push', '--plan', planned.json.planId);
+  const mismatch = await cli(repo, 'push', '--plan', planned.json.planId, ...guards(ANY_HASH));
   assert.equal(mismatch.code, 13);
   assert.equal(mismatch.json.errors[0].code, 'COMMIT_TREE_MISMATCH');
 
   delete stored.approvedTree;
   await writeFile(planFile, JSON.stringify(stored));
-  const missing = await cli(repo, 'push', '--plan', planned.json.planId);
+  const missing = await cli(repo, 'push', '--plan', planned.json.planId, ...guards(ANY_HASH));
   assert.equal(missing.code, 13);
   assert.equal(missing.json.errors[0].code, 'COMMIT_TREE_MISMATCH');
 });
 
 
-test('push failure is retryable without creating another commit', async () => {
+test('push failure is retryable without creating another commit, only after verify-push', async () => {
   const repo = await initRepo({ allowPush: true });
-  const initialRemote = await mkdtemp(path.join(os.tmpdir(), 'safe-commit-remote-'));
-  temporaryPaths.push(initialRemote);
-  await git(initialRemote, 'init', '--bare');
-  await git(repo, 'remote', 'add', 'origin', initialRemote);
-  await git(repo, 'push', '-u', 'origin', 'feature');
-  await git(repo, 'remote', 'set-url', 'origin', path.join(repo, 'missing-remote'));
+  // Local-path endpoints are refused, so the remotes are served through the ssh test wrapper.
+  const remote = await remoteFixture(repo);
+  const hash = endpointHash(remote.url('origin'));
+  const originBefore = await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature');
   await writeFile(path.join(repo, 'tracked.txt'), 'v2\n');
 
   const planned = await check(repo);
-  const failed = await cli(repo, 'commit', '--plan', planned.json.planId, '--push');
+  const committed = await cli(repo, 'commit', '--plan', planned.json.planId);
+  assert.equal(committed.code, 0);
+  await remote.setMode('fail-all');
+  const failed = await remote.cli('push', '--plan', planned.json.planId, ...guards(hash));
   assert.equal(failed.code, 15);
+  assert.equal(failed.json.errors[0].code, 'PUSH_FAILED');
+  assert.equal(failed.json.errors[0].details.stderr, undefined);
   assert.match(failed.json.commitSha, /^[a-f0-9]{40,64}$/);
   assert.equal(await git(repo, 'rev-list', '--count', 'HEAD'), '2');
+  // Git invoked push, so its effect is unknown: the attempt stays until verify-push decides.
+  assert.equal((await inspectPlan(repo, planned.json.planId)).binding.push.state, 'attempted');
 
-  const retryRemote = await mkdtemp(path.join(os.tmpdir(), 'safe-commit-retry-'));
-  temporaryPaths.push(retryRemote);
-  await git(retryRemote, 'init', '--bare');
-  await git(repo, 'remote', 'set-url', 'origin', retryRemote);
-  const retried = await cli(repo, 'push', '--plan', planned.json.planId);
-  assert.equal(retried.code, 0);
+  await remote.setMode('');
+  const direct = await remote.cli('push', '--plan', planned.json.planId, ...guards(hash));
+  assert.equal(direct.json.errors[0].code, 'PUSH_OUTCOME_UNKNOWN');
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, 1);
+  const cleared = await remote.cli('verify-push', '--plan', planned.json.planId);
+  assert.equal(cleared.code, 0, cleared.stdout);
+  assert.equal(cleared.json.pushed, false);
+  assert.equal((await inspectPlan(repo, planned.json.planId)).binding.clearedAttempts, 1);
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), originBefore);
+
+  const retried = await remote.cli('push', '--plan', planned.json.planId, ...guards(hash));
+  assert.equal(retried.code, 0, retried.stdout);
   assert.equal(retried.json.pushed, true);
   assert.equal(await git(repo, 'rev-list', '--count', 'HEAD'), '2');
-  assert.equal(await git(retryRemote, 'rev-parse', 'refs/heads/feature'), failed.json.commitSha);
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), failed.json.commitSha);
+});
 
+test('B1: a nonzero push exit after the remote received the commit is never pushed again', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const hash = endpointHash(remote.url('origin'));
+  const { planId, commitSha } = await committedPlan(repo);
+  await remote.setMode('fail-after-receive');
+  const failed = await remote.cli('push', '--plan', planId, ...guards(hash));
+  assert.equal(failed.code, 15);
+  assert.equal(failed.json.errors[0].code, 'PUSH_FAILED');
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), commitSha);
+  let plan = await inspectPlan(repo, planId);
+  assert.equal(plan.pushed, false);
+  assert.equal(plan.binding.push.state, 'attempted');
+
+  await remote.setMode('');
+  const direct = await remote.cli('push', '--plan', planId, ...guards(hash));
+  assert.equal(direct.json.errors[0].code, 'PUSH_OUTCOME_UNKNOWN');
+  const receives = (await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length;
+  assert.equal(receives, 1);
+  const reconciled = await remote.cli('verify-push', '--plan', planId);
+  assert.equal(reconciled.code, 0, reconciled.stdout);
+  plan = await inspectPlan(repo, planId);
+  assert.equal(plan.pushed, true);
+  assert.equal(plan.binding.push.state, 'verified');
+  assert.equal(await git(repo, 'rev-parse', 'refs/remotes/origin/feature'), commitSha);
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, receives);
 });
 
 test('Git without hook run support fails early with a stable code', async () => {
@@ -443,4 +595,355 @@ test('schema and repository policy are valid JSON', async () => {
   const root = path.resolve(import.meta.dirname, '..');
   assert.equal(JSON.parse(await readFile(path.join(root, 'docs', 'safe-commit-request.schema.json'), 'utf8')).properties.schemaVersion.const, 1);
   assert.equal(JSON.parse(await readFile(path.join(root, '.safe-commit.json'), 'utf8')).allowPush, true);
+});
+
+test('B12: every commit --push form is refused before the plan, index, commit, or network is touched', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  await writeFile(path.join(repo, 'tracked.txt'), 'v2\n');
+  const planned = await check(repo);
+  const id = planned.json.planId;
+  const hash = endpointHash(remote.url('origin'));
+  const forms = [
+    ['commit', '--plan', id, '--push'],
+    ['commit', '--push', '--plan', id],
+    ['commit', '--plan', id, '--push', ...guards(hash)],
+    ['commit', ...guards(hash), '--push', '--plan', id],
+    ['commit', '--push=true', '--plan', id],
+  ];
+  for (const form of forms) {
+    const result = await remote.cli(...form);
+    assert.equal(result.code, 2, form.join(' '));
+    assert.equal(result.json.errors[0].code, 'COMMIT_PUSH_REMOVED', form.join(' '));
+    assert.equal(result.json.commitSha, null);
+  }
+  assert.equal(await git(repo, 'rev-list', '--count', 'HEAD'), '1');
+  assert.equal((await command(repo, 'git', ['diff', '--cached', '--quiet'])).code, 0);
+  assert.equal((await inspectPlan(repo, id)).state, 'ready');
+  assert.deepEqual(await remote.calls(), []);
+  const committed = await cli(repo, 'commit', '--plan', id);
+  assert.equal(committed.code, 0);
+  assert.equal(committed.json.pushed, false);
+  assert.deepEqual(await remote.calls(), []);
+});
+
+test('Q5-A: push needs both guards in valid form, refused before any network I/O', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const { planId } = await committedPlan(repo);
+  const hash = endpointHash(remote.url('origin'));
+  const cases = [
+    [[], 'ENDPOINT_HASH_REQUIRED'],
+    [['--endpoint-sha256', hash], 'ENDPOINT_HASH_REQUIRED'],
+    [['--target-ref', 'refs/heads/feature'], 'ENDPOINT_HASH_REQUIRED'],
+    [guards('abc'), 'USAGE'],
+    [guards(hash.toUpperCase()), 'USAGE'],
+    [guards(hash, 'feature'), 'USAGE'],
+    [guards(hash, 'refs/tags/v1'), 'USAGE'],
+    [guards(hash, 'refs/heads/a..b'), 'USAGE'],
+    [guards(hash, 'refs/heads/bad.lock'), 'USAGE'],
+  ];
+  for (const [extra, code] of cases) {
+    const result = await remote.cli('push', '--plan', planId, ...extra);
+    assert.equal(result.code, 2, `${extra.join(' ')}: ${result.stdout}`);
+    assert.equal(result.json.errors[0].code, code, extra.join(' '));
+  }
+  assert.equal((await inspectPlan(repo, planId)).pushed, false);
+  assert.deepEqual(await remote.calls(), []);
+});
+
+test('B2/B8: guarded push binds endpoint and target, pushes the bound ref and reports binding by state', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const hash = endpointHash(remote.url('origin'));
+  await writeFile(path.join(repo, 'tracked.txt'), 'v2\n');
+  const planned = await check(repo);
+  const ready = await inspectPlan(repo, planned.json.planId);
+  assert.deepEqual(Object.keys(ready.binding), ['head', 'policyHash', 'indexEntries', 'approvedTree', 'endpoint', 'push', 'clearedAttempts']);
+  assert.equal(ready.binding.head, await git(repo, 'rev-parse', 'HEAD'));
+  assert.match(ready.binding.policyHash, /^[0-9a-f]{64}$/u);
+  assert.equal(ready.binding.indexEntries[0].path, 'tracked.txt');
+  assert.equal(ready.binding.approvedTree, null);
+  assert.deepEqual(ready.binding.endpoint, { sha256: hash, error: null });
+  assert.equal(ready.binding.push, null);
+  assert.equal(ready.binding.clearedAttempts, 0);
+
+  const committed = await cli(repo, 'commit', '--plan', planned.json.planId);
+  const afterCommit = await inspectPlan(repo, planned.json.planId);
+  assert.equal(afterCommit.binding.approvedTree, await git(repo, 'rev-parse', 'HEAD^{tree}'));
+  assert.equal(afterCommit.binding.push, null);
+
+  const pushed = await remote.cli('push', '--plan', planned.json.planId, ...guards(hash));
+  assert.equal(pushed.code, 0, pushed.stdout);
+  assert.equal(pushed.json.pushed, true);
+  const commitSha = committed.json.commitSha;
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), commitSha);
+  assert.equal(await git(repo, 'rev-parse', 'refs/remotes/origin/feature'), commitSha);
+  const verified = await inspectPlan(repo, planned.json.planId);
+  assert.deepEqual(verified.binding.push, {
+    state: 'verified',
+    endpointSha256: hash,
+    targetRef: 'refs/heads/feature',
+    commitSha,
+    trackingRef: 'refs/remotes/origin/feature',
+    remoteSha: commitSha,
+  });
+  assert.deepEqual(await remote.calls(), ['git-receive-pack origin.git', 'git-upload-pack origin.git']);
+  for (const output of [JSON.stringify(ready), JSON.stringify(verified), pushed.stdout]) {
+    assert.ok(!output.includes(repo) && !output.includes(remote.url('origin')) && !output.includes('example.invalid'));
+  }
+
+  const again = await remote.cli('push', '--plan', planned.json.planId, ...guards(hash));
+  assert.equal(again.code, 0);
+  assert.equal((await remote.calls()).length, 2);
+});
+
+test('B7/B9: endpoint resolution classifies endpoints and refuses credentials without network', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const { planId } = await committedPlan(repo);
+  const endpointError = async () => (await inspectPlan(repo, planId)).binding.endpoint;
+  const setPushUrls = async (...urls) => {
+    await command(repo, 'git', ['config', '--unset-all', 'remote.origin.pushurl']);
+    for (const url of urls) await git(repo, 'config', '--add', 'remote.origin.pushurl', url);
+  };
+  const cases = [
+    [['/srv/repo.git'], 'LOCAL_PUSH_ENDPOINT'],
+    [['../relative.git'], 'LOCAL_PUSH_ENDPOINT'],
+    [['~/repo.git'], 'LOCAL_PUSH_ENDPOINT'],
+    [['file:///srv/repo.git'], 'LOCAL_PUSH_ENDPOINT'],
+    [['git://git.example.invalid/repo.git'], 'UNSUPPORTED_PUSH_ENDPOINT'],
+    [['http://git.example.invalid/repo.git'], 'UNSUPPORTED_PUSH_ENDPOINT'],
+    [['ext::sh -c true'], 'UNSUPPORTED_PUSH_ENDPOINT'],
+    [[`https://${CREDENTIAL_SENTINEL}:${CREDENTIAL_SENTINEL}x@git.example.invalid/repo.git`], 'CREDENTIAL_IN_ENDPOINT'],
+    [[`https://${CREDENTIAL_SENTINEL}@git.example.invalid/repo.git`], 'CREDENTIAL_IN_ENDPOINT'],
+    [[`ssh://git:${CREDENTIAL_SENTINEL}@git.example.invalid/repo.git`], 'CREDENTIAL_IN_ENDPOINT'],
+    [[`git:${CREDENTIAL_SENTINEL}@git.example.invalid:repo.git`], 'CREDENTIAL_IN_ENDPOINT'],
+    [[remote.url('origin'), remote.url('second')], 'MULTIPLE_PUSH_ENDPOINTS'],
+  ];
+  for (const [urls, code] of cases) {
+    await setPushUrls(...urls);
+    assert.deepEqual(await endpointError(), { sha256: null, error: code }, urls.join(' '));
+    const result = await remote.cli('push', '--plan', planId, ...guards(endpointHash(urls[0])));
+    assert.equal(result.json.errors[0].code, code, urls.join(' '));
+    for (const output of [result.stdout, result.stderr]) {
+      assert.ok(!output.includes(CREDENTIAL_SENTINEL) && !output.includes('example.invalid'), output);
+    }
+  }
+  await setPushUrls('git@git.example.invalid:team/repo.git');
+  assert.equal((await endpointError()).sha256, endpointHash('git@git.example.invalid:team/repo.git'));
+  await setPushUrls('https://git.example.invalid/team/repo.git');
+  assert.equal((await endpointError()).sha256, endpointHash('https://git.example.invalid/team/repo.git'));
+  await setPushUrls('https://git.example.invalid/team/repo.git');
+  // A rewrite whose result still starts with its own prefix would be rewritten again on push.
+  await git(repo, 'config', 'url.https://git.example.invalid/team/.insteadOf', 'https://git.example.invalid/');
+  assert.equal((await endpointError()).error, 'UNSUPPORTED_PUSH_ENDPOINT');
+  await git(repo, 'config', '--unset', 'url.https://git.example.invalid/team/.insteadOf');
+  await git(repo, 'config', 'url.https://mirror.example.invalid/.insteadOf', 'https://git.example.invalid/');
+  assert.equal((await endpointError()).sha256, endpointHash('https://mirror.example.invalid/team/repo.git'));
+  await git(repo, 'config', '--unset', 'url.https://mirror.example.invalid/.insteadOf');
+  await setPushUrls();
+  await git(repo, 'config', 'branch.feature.remote', 'nourl');
+  assert.equal((await endpointError()).error, 'NO_PUSH_ENDPOINT');
+  await git(repo, 'config', 'branch.feature.remote', '.');
+  assert.equal((await endpointError()).error, 'NO_PUSH_ENDPOINT');
+  assert.deepEqual(await remote.calls(), []);
+});
+
+test('B8: an endpoint changed after review is refused before network I/O; restoring it pushes', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const other = await remote.bare('other');
+  const { planId, commitSha } = await committedPlan(repo);
+  const reviewed = endpointHash(remote.url('origin'));
+  const originBefore = await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature');
+  await git(repo, 'config', 'remote.origin.pushurl', remote.url('other'));
+  const changed = await remote.cli('push', '--plan', planId, ...guards(reviewed));
+  assert.equal(changed.code, 15);
+  assert.equal(changed.json.errors[0].code, 'PUSH_ENDPOINT_CHANGED');
+  assert.deepEqual(await remote.calls(), []);
+  assert.equal((await command(other, 'git', ['rev-parse', '--verify', '-q', 'refs/heads/feature'])).code, 1);
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), originBefore);
+  const plan = await inspectPlan(repo, planId);
+  assert.equal(plan.pushed, false);
+  assert.equal(plan.binding.push, null);
+  await git(repo, 'config', '--unset', 'remote.origin.pushurl');
+  const pushed = await remote.cli('push', '--plan', planId, ...guards(reviewed));
+  assert.equal(pushed.code, 0, pushed.stdout);
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), commitSha);
+});
+
+test('B10: the target ref is bound, compared before network I/O and checked against protected branches', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const { planId } = await committedPlan(repo);
+  const hash = endpointHash(remote.url('origin'));
+  await git(repo, 'config', 'branch.feature.merge', 'refs/heads/other');
+  const changed = await remote.cli('push', '--plan', planId, ...guards(hash));
+  assert.equal(changed.json.errors[0].code, 'PUSH_TARGET_CHANGED');
+  await git(repo, 'config', 'branch.feature.merge', 'refs/heads/main');
+  const protectedMerge = await remote.cli('push', '--plan', planId, ...guards(hash));
+  assert.equal(protectedMerge.json.errors[0].code, 'PROTECTED_BRANCH');
+  const protectedFlag = await remote.cli('push', '--plan', planId, ...guards(hash, 'refs/heads/main'));
+  assert.equal(protectedFlag.json.errors[0].code, 'PROTECTED_BRANCH');
+  assert.deepEqual(await remote.calls(), []);
+  assert.equal((await inspectPlan(repo, planId)).pushed, false);
+  assert.equal((await command(remote.remoteDir('origin'), 'git', ['rev-parse', '--verify', '-q', 'refs/heads/main'])).code, 1);
+});
+
+test('B9: transport failure output, plan and errors never carry the URL, stderr or credentials', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const failingUrl = `ssh://${URL_SENTINEL}.example.invalid/origin.git`;
+  await git(repo, 'remote', 'set-url', 'origin', failingUrl);
+  const { planId } = await committedPlan(repo);
+  await remote.setMode('fail-all');
+  const json = await remote.cli('push', '--plan', planId, ...guards(endpointHash(failingUrl)));
+  assert.equal(json.code, 15);
+  assert.equal(json.json.errors[0].code, 'PUSH_FAILED');
+  assert.deepEqual(Object.keys(json.json.errors[0].details).sort(), ['commitSha', 'gitExitCode']);
+  assert.equal((await inspectPlan(repo, planId)).binding.push.state, 'attempted');
+  // verify-push over the failing transport leaks nothing either; once it works, it clears the attempt.
+  const unverified = await remote.cli('verify-push', '--plan', planId);
+  assert.equal(unverified.json.errors[0].code, 'REMOTE_UNVERIFIED');
+  await remote.setMode('');
+  assert.equal((await remote.cli('verify-push', '--plan', planId)).code, 0);
+  await remote.setMode('fail-all');
+  const human = await remote.human('push', '--plan', planId, ...guards(endpointHash(failingUrl)));
+  assert.notEqual(human.code, 0);
+  assert.match(human.stderr, /PUSH_FAILED/u);
+  const planFile = await readFile(path.join(repo, '.git', 'safe-commit', 'plans', `${planId}.json`), 'utf8');
+  for (const output of [json.stdout, json.stderr, unverified.stdout, unverified.stderr, human.stdout, human.stderr, planFile]) {
+    assert.ok(!output.includes(URL_SENTINEL) && !output.includes(CREDENTIAL_SENTINEL), output);
+  }
+  assert.equal((await inspectPlan(repo, planId)).binding.push.state, 'attempted');
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, 2);
+});
+
+test('B11: a remote write is persisted before local verification, and verify-push recovers without pushing again', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const hash = endpointHash(remote.url('origin'));
+  const { planId, commitSha } = await committedPlan(repo);
+  const lockFile = path.join(repo, '.git', 'refs', 'remotes', 'origin', 'feature.lock');
+  await writeFile(lockFile, '');
+  const updateFailed = await remote.cli('push', '--plan', planId, ...guards(hash));
+  assert.equal(updateFailed.code, 15);
+  assert.equal(updateFailed.json.errors[0].code, 'TRACKING_REF_UPDATE_FAILED');
+  assert.equal(updateFailed.json.pushed, true);
+  let plan = await inspectPlan(repo, planId);
+  assert.equal(plan.binding.push.state, 'pushed');
+  assert.equal(plan.binding.push.commitSha, commitSha);
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), commitSha);
+
+  const pending = await remote.cli('push', '--plan', planId, ...guards(hash));
+  assert.equal(pending.json.errors[0].code, 'PUSH_VERIFICATION_PENDING');
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, 1);
+
+  await rm(lockFile);
+  const recovered = await remote.cli('verify-push', '--plan', planId);
+  assert.equal(recovered.code, 0, recovered.stdout);
+  plan = await inspectPlan(repo, planId);
+  assert.equal(plan.binding.push.state, 'verified');
+  assert.equal(plan.binding.push.remoteSha, commitSha);
+  assert.equal(await git(repo, 'rev-parse', 'refs/remotes/origin/feature'), commitSha);
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, 1);
+  const noop = await remote.cli('verify-push', '--plan', planId);
+  assert.equal(noop.code, 0);
+});
+
+test('B11: post-push ls-remote failure leaves pushed state that verify-push completes', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const hash = endpointHash(remote.url('origin'));
+  const { planId, commitSha } = await committedPlan(repo);
+  await remote.setMode('fail-upload');
+  const unverified = await remote.cli('push', '--plan', planId, ...guards(hash));
+  assert.equal(unverified.json.errors[0].code, 'REMOTE_UNVERIFIED');
+  assert.ok(!unverified.stdout.includes(URL_SENTINEL) && !unverified.stdout.includes(CREDENTIAL_SENTINEL));
+  assert.equal((await inspectPlan(repo, planId)).binding.push.state, 'pushed');
+  const stillFailing = await remote.cli('verify-push', '--plan', planId);
+  assert.equal(stillFailing.json.errors[0].code, 'REMOTE_UNVERIFIED');
+  await remote.setMode('');
+  const recovered = await remote.cli('verify-push', '--plan', planId);
+  assert.equal(recovered.code, 0, recovered.stdout);
+  assert.equal((await inspectPlan(repo, planId)).binding.push.remoteSha, commitSha);
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, 1);
+});
+
+async function ageLock(repo) {
+  const locks = path.join(repo, '.git', 'safe-commit', 'locks');
+  const old = new Date(Date.now() - 60 * 60_000);
+  for (const name of await readdir(locks)) await utimes(path.join(locks, name), old, old);
+}
+
+test('B11: interrupted pushes are reconciled by verify-push in both directions', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const hash = endpointHash(remote.url('origin'));
+  const { planId, commitSha } = await committedPlan(repo);
+  const originBefore = await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature');
+
+  await remote.setMode('kill-before-receive');
+  const killedBefore = await remote.cli('push', '--plan', planId, ...guards(hash)).catch(() => null);
+  assert.equal(killedBefore, null);
+  assert.equal((await inspectPlan(repo, planId)).binding.push.state, 'attempted');
+  await ageLock(repo);
+  await remote.setMode('');
+  const unknown = await remote.cli('push', '--plan', planId, ...guards(hash));
+  assert.equal(unknown.json.errors[0].code, 'PUSH_OUTCOME_UNKNOWN');
+  const receivesBefore = (await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length;
+  const cleared = await remote.cli('verify-push', '--plan', planId);
+  assert.equal(cleared.code, 0, cleared.stdout);
+  assert.equal(cleared.json.pushed, false);
+  assert.equal((await inspectPlan(repo, planId)).binding.push, null);
+  assert.equal((await inspectPlan(repo, planId)).binding.clearedAttempts, 1);
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), originBefore);
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, receivesBefore);
+
+  await remote.setMode('kill-after-receive');
+  const killedAfter = await remote.cli('push', '--plan', planId, ...guards(hash)).catch(() => null);
+  assert.equal(killedAfter, null);
+  assert.equal((await inspectPlan(repo, planId)).binding.push.state, 'attempted');
+  assert.equal(await git(remote.remoteDir('origin'), 'rev-parse', 'refs/heads/feature'), commitSha);
+  await ageLock(repo);
+  await remote.setMode('');
+  const receives = (await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length;
+  const completed = await remote.cli('verify-push', '--plan', planId);
+  assert.equal(completed.code, 0, completed.stdout);
+  const plan = await inspectPlan(repo, planId);
+  assert.equal(plan.pushed, true);
+  assert.equal(plan.binding.push.state, 'verified');
+  assert.equal(await git(repo, 'rev-parse', 'refs/remotes/origin/feature'), commitSha);
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, receives);
+});
+
+test('B11: verify-push fails closed on conflicts, mismatches and changed endpoint or target', async () => {
+  const repo = await initRepo({ allowPush: true });
+  const remote = await remoteFixture(repo);
+  const hash = endpointHash(remote.url('origin'));
+  const { planId, commitSha } = await committedPlan(repo);
+  const lockFile = path.join(repo, '.git', 'refs', 'remotes', 'origin', 'feature.lock');
+  await writeFile(lockFile, '');
+  assert.equal((await remote.cli('push', '--plan', planId, ...guards(hash))).json.errors[0].code, 'TRACKING_REF_UPDATE_FAILED');
+  await rm(lockFile);
+  const calls = (await remote.calls()).length;
+
+  await git(repo, 'config', 'remote.origin.pushurl', remote.url('elsewhere'));
+  assert.equal((await remote.cli('verify-push', '--plan', planId)).json.errors[0].code, 'PUSH_ENDPOINT_CHANGED');
+  await git(repo, 'config', '--unset', 'remote.origin.pushurl');
+  await git(repo, 'config', 'branch.feature.merge', 'refs/heads/other');
+  assert.equal((await remote.cli('verify-push', '--plan', planId)).json.errors[0].code, 'PUSH_TARGET_CHANGED');
+  await git(repo, 'config', 'branch.feature.merge', 'refs/heads/feature');
+  assert.equal((await remote.calls()).length, calls);
+
+  const initial = await git(repo, 'rev-parse', 'HEAD~1');
+  await git(repo, 'update-ref', 'refs/remotes/origin/feature', await git(repo, 'commit-tree', '-m', 'other', `${initial}^{tree}`));
+  assert.equal((await remote.cli('verify-push', '--plan', planId)).json.errors[0].code, 'TRACKING_REF_CONFLICT');
+  await git(repo, 'update-ref', 'refs/remotes/origin/feature', initial);
+  await git(remote.remoteDir('origin'), 'update-ref', 'refs/heads/feature', initial);
+  assert.equal((await remote.cli('verify-push', '--plan', planId)).json.errors[0].code, 'REMOTE_MISMATCH');
+  await git(remote.remoteDir('origin'), 'update-ref', 'refs/heads/feature', commitSha);
+  assert.equal((await remote.cli('verify-push', '--plan', planId)).code, 0);
+  assert.equal((await remote.calls()).filter((call) => call.startsWith('git-receive-pack')).length, 1);
 });

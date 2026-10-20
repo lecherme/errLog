@@ -51,17 +51,25 @@ A Stage Contract is an execution boundary for the current batch of work, not a n
     the checkbox is checked.
 19. safe-commit `check` (the checkpoint's `ready_for_safe_commit` state, the checkbox
     change, and the stage files are committed in this same batch — see Session
-    continuity and recovery).
-20. User approves the plan → `commit`.
-21. Ask separately about push → user approval → `push`.
+    continuity and recovery) → publish delivery commit-ready → **stop**.
+20. Codex commit review (`PASS`) → user approves the plan → `commit` → publish delivery
+    commit-result and push-ready → **stop** and ask separately about push, naming the
+    remote, the full target ref, and the endpoint hash.
+21. Codex push review (`PASS`) → user approves the push → run delivery `verify` alone; it
+    must be `valid` → the guarded `push` with `--endpoint-sha256` and `--target-ref` from
+    the push-ready record → publish push-result → **stop**. If push fails after Git was
+    invoked, reports a failed post-push verification, or an unknown outcome, stop and
+    report; never retry the push directly. Only after the user
+    separately approves recovery run `verify-push`, then publish push-result.
 22. Remote CI runs the committed deterministic suite against the pushed commit — no LLM,
     no sub-agent (see CI below).
 23. Remote CI failure → a new repair stage (see CI below).
 
 Milestone convergence review follows a Group or key end-to-end flow (not every stage).
 
-Both cross reviews (3a and 15a) are default gates; the user does not have to ask for
-them. Only the user can waive one, explicitly (see Cross-agent review handoff).
+The cross reviews (3a, 15a, and the delivery reviews in 19–21) are default gates; the
+user does not have to ask for them. Only the user can waive one, explicitly (see
+Cross-agent review handoff).
 
 ## Hard rules
 
@@ -551,13 +559,16 @@ the conversation: Claude publishes an immutable review request, the user has Cod
 an immutable response bound to that request, and the user tells Claude to read it. No
 agent ever invokes another; the user carries every step.
 
-There are two channels, and each is a default gate of every stage:
+There are three channels, and each is a default gate of every stage:
 
 - **contract**: reviews a Stage Contract draft after Claude drafts it and before the
   user approves it (Flow step 3a). Verdicts: `OK`, `NEEDS_CHANGES`, `BLOCKED`.
 - **implementation**: reviews a finished stage after the local gate and the Claude stage
   reviewer PASS, before the task checkbox (Flow step 15a). Verdicts: `PASS`, `FAIL`,
   `BLOCKED`.
+- **delivery**: reviews the commit gate after safe-commit `check` and the push gate
+  after the commit (Flow steps 19–21), as one append-only chain of records. Verdicts:
+  `PASS`, `FAIL`, `BLOCKED`. See "Delivery channel".
 
 **Authority**: a handoff is a redacted transport and review snapshot. It is not a source
 of truth, a checkpoint, a task system, or an audit log. It never changes the
@@ -582,6 +593,8 @@ explicitly. Only the user can waive a cross review.
     .agent-handoffs/<stage-id>/contract/runs/<run-id>/index.json                            contract
     .agent-handoffs/<stage-id>/contract/runs/<run-id>/requests/NNNN-contract-request.json
     .agent-handoffs/<stage-id>/contract/runs/<run-id>/responses/NNNN-codex-contract-review.json
+    .agent-handoffs/<stage-id>/delivery/runs/<run-id>/index.json                            delivery
+    .agent-handoffs/<stage-id>/delivery/runs/<run-id>/records/NNNN-<kind>.json
 
 The implementation channel keeps the original (H1) layout, names, and record shapes, so
 existing handoffs verify unchanged without migration. Each channel has its own runs,
@@ -669,17 +682,23 @@ and abandonment stay with the checkpoint, Git, safe-commit, and the stage report
 **Bootstrap**: H2, the stage that added the contract channel, is the one exception: its
 own Stage Contract was approved by the user directly, and its implementation was
 reviewed through the H1 implementation handoff. The contract-review default applies from
-the first Stage Contract after H2 is pushed.
+the first Stage Contract after H2 is pushed. Likewise H3, the stage that added the
+delivery channel, is delivered through the earlier flow without delivery records; its own
+push already uses the guarded command, with the endpoint hash from `inspect`'s
+`binding.endpoint.sha256` and the upstream's full merge ref shown to the user. The
+delivery default applies from the first stage after H3 is pushed.
 
 ### Commands
 
 `tools/stage-handoff.mjs` uses only Node built-ins and runs only read-only Git commands
-(`rev-parse`, `status`, `rev-list`, `check-ignore`, `ls-files`) plus the read-only
-`safe-commit inspect` when a request names a plan. Every command prints one
+(`rev-parse`, `status`, `rev-list`, `check-ignore`, `ls-files`, and for the delivery
+channel `diff-tree`, `cat-file`, and `config --get branch.<b>.remote|merge`) plus the
+read-only `safe-commit inspect` when a request names a plan. Every command prints one
 JSON object that names the `channel` it acted on; exit code 0 means success or `valid`,
-1 refused or not valid, 2 usage error. `--channel` is `contract` or `implementation`;
-without it the tool acts on `implementation`, for compatibility with H1. Always pass it
-explicitly.
+1 refused or not valid, 2 usage error. `--channel` is `contract`, `implementation`, or
+`delivery`; without it the tool acts on `implementation`, for compatibility with H1.
+Always pass it explicitly. The delivery channel's commands are listed under "Delivery
+channel".
 
 - `node tools/stage-handoff.mjs init --stage <id> --channel <channel> [--new-run] --json`
   creates a run with `currentRevision: 0`. It refuses if the channel already has a run
@@ -771,6 +790,109 @@ Codex's draft supplies `verdict` (`PASS`, `FAIL`, or `BLOCKED`), `blockingFindin
 `source`: the request's `stageId`, `runId`, `revision`, `requestPath`, `requestSha256`,
 `changedFilesDigest`, and `currentHead`. `respond` refuses a request that is not current,
 already answered, or stale.
+
+### Delivery channel
+
+One run is one chain of immutable records in `records/`, numbered in a single sequence:
+commit-ready → codex-commit-review → commit-result → push-ready → codex-push-review →
+push-result. Each record carries `previousRecord` (run-relative path and SHA-256 of the
+record before it); `index.json` names the current record. Every fact is computed by the
+tool from Git and `safe-commit inspect`. No record has an approval field, and the tool
+never commits or pushes. Push endpoints appear only as the hash `inspect` reports; the
+tool never sees a URL.
+
+Commands:
+
+- `init --stage <id> --channel delivery [--new-run] --json`;
+- `publish --stage <id> --channel delivery --kind <commit-ready|commit-result|push-ready|push-result> --input <draft.json> --json`
+  (Claude). Drafts: commit-ready `reason`, `implementation` (`runId`, `revision`),
+  `planId`, `priorFindings`, `nextAction`; push-ready `reason`, `priorFindings`,
+  `nextAction`; commit-result and push-result `nextAction` only;
+- `respond --stage <id> --channel delivery --revision <n> --input <draft.json> --json`
+  (Codex) reviews record `n`, which must be the current commit-ready or push-ready. The
+  draft is the implementation-response draft (`verdict` `PASS`, `FAIL`, or `BLOCKED`);
+  the tool adds `source` (reviewed record path and hash, kind, plan ID, HEAD, worktree
+  digest). It first re-checks freshness and refuses a stale record (`REQUEST_STALE`);
+- `verify --stage <id> --channel delivery [--revision <n>] --json`.
+
+Order (an illegal record is refused with `OUT_OF_ORDER` or `INPUT_INVALID`, nothing
+written): the first record is a commit-ready with reason `initial`. A commit-ready may be
+followed by its review or by a new commit-ready: `plan_refresh` (the previous plan
+expired or was consumed), `delivery_fix` (after FAIL or BLOCKED caused only by closure,
+message, plan metadata, or evidence; it reuses the same implementation PASS, and any
+change to a reviewed implementation file is `IMPLEMENTATION_CHANGED`), or `targeted_fix`
+(binds a newer implementation revision with its own PASS). commit-result follows a direct
+PASS or an inherited one; only push-ready follows commit-result. A push-ready may be
+followed by its review or a new push-ready: `push_retry` (after PASS, while the plan is
+still unpushed with no push attempt; a failed push keeps its attempt until `verify-push`
+shows the remote unchanged, nextGate `awaiting_push_verification`, and the attempt that
+`verify-push` then clears makes the old push-ready `stale` with `PUSH_ATTEMPT_CLEARED`, so
+its PASS can never lead back to push approval) or `push_fix` (after FAIL or BLOCKED; the commit,
+tree, HEAD, and worktree must be unchanged, else `COMMIT_CHANGED`). push-result follows a
+push PASS once safe-commit records the push as verified; the run is then read-only.
+`delivery_fix` and `push_fix` list the previous review's blocking findings verbatim in
+`priorFindings`, with the contract channel's rounds rule along their own chain; a third
+round is `FIX_ROUND_LIMIT`.
+
+What the tool binds and checks:
+
+- **commit-ready**: the implementation request and PASS response (paths and hashes; the
+  latest implementation run must have no `invalid` reason, but may be `stale`, since the
+  checkbox and checkpoint change after the review); HEAD equal to the review's
+  `currentHead` and `binding.head`; the plan (`ready`, unexpired, files, ignored files,
+  full commit message, binding); the worktree manifest; `.safe-commit.json`'s hash; the
+  Git-entry manifest; the closure check; the review fingerprint.
+- **Closure delta**: the plan's files must be exactly the reviewed in-scope files plus
+  the checkpoint and its sibling `tasks.md` (none for a stage without a checkpoint), and
+  every other reviewed file must still have its reviewed hash (`POST_REVIEW_CHANGES`).
+  `tasks.md` may change only by checking this stage's task IDs: with those boxes
+  unchecked again it must hash to its reviewed or HEAD content. The checkpoint's
+  `stageState` is read only from its single unfenced `## Implementation Checkpoint`
+  section (exactly one `- stageState:` line, outside fences, up to the next unfenced `## `
+  heading); zero or more than one section or line is `CHECKPOINT_AMBIGUOUS`, and any value
+  but `ready_for_safe_commit` is `CHECKPOINT_NOT_READY`.
+- **Git-entry manifest**: one entry per plan path (`kind` blob, executable, symlink, or
+  deleted, with mode and blob ID), sorted by path bytes, with `manifestSha256`; a rename
+  is a deletion plus an addition.
+- **Review fingerprint (Q1)**: SHA-256 over everything the commit review judges; only the
+  plan's ID, creation time, expiry, and state are left out. A `plan_refresh` commit-ready
+  inherits PASS only from an earlier commit-ready with the same fingerprint and a direct
+  PASS (`inheritedReview`). The user still approves the new plan ID.
+- **commit-result**: HEAD is the plan's commit, a single-parent child of the reviewed
+  HEAD; the `diff-tree` entries match the manifest in set, status class, mode, and blob
+  (`COMMIT_ENTRY_MISMATCH`); the tree is the approved tree (`COMMIT_TREE_MISMATCH`); the
+  message matches (`COMMIT_MESSAGE_MISMATCH`); the remaining changes are exactly the
+  plan's ignored files.
+- **push-ready**: HEAD and the worktree are unchanged since commit-result; the target is
+  the upstream remote and full `refs/heads/` merge ref, not a protected branch; the
+  endpoint hash comes from `binding.endpoint`; exactly the reviewed commit is ahead of
+  the upstream and nothing is behind. The record gives the exact guarded push command.
+- **push-result**: safe-commit's recorded push is `verified`; its endpoint hash, the
+  push-ready hash, and the current hash agree (`PUSH_ENDPOINT_CHANGED`), and so do the
+  target and commit (`PUSH_TARGET_CHANGED`); the remote SHA and tracking ref are the
+  commit; ahead/behind are 0/0. CI is `not_configured` without tracked
+  `.github/workflows/*`, otherwise `unknown`; the tool never queries CI and never writes
+  `passed`.
+
+`verify` checks the chain, order, review bindings, and the sensitive-data scan, then the
+freshness of the record under review. A commit-ready needs a `ready`, unexpired plan and
+an unchanged HEAD, upstream, worktree, planned files, policy, and fingerprint. A
+push-ready needs a committed, unpushed plan and an unchanged HEAD, upstream, target ref,
+endpoint hash, worktree, policy, and count of push attempts cleared by `verify-push`
+(binding `clearedAttempts`, recorded in the push-ready), but never checks the plan's
+expiry: the TTL only gates the commit, so a committed plan stays pushable. Changes are
+reported as `stale` with `PLAN_EXPIRED`, `PLAN_CONSUMED`, `HEAD_CHANGED`,
+`UPSTREAM_CHANGED`, `PUSH_TARGET_CHANGED`, `PUSH_ENDPOINT_CHANGED`,
+`PUSH_ATTEMPT_CLEARED`, `DIGEST_CHANGED`, `FILES_CHANGED`, `POLICY_CHANGED`, or
+`FINGERPRINT_CHANGED`. A stale record never gets an `awaiting_user_*` gate or the
+`CODEX_PASS_IS_NOT_APPROVAL` notice. While a commit-ready is under review,
+`planSecondsRemaining` is reported; under 180 seconds the notice `PLAN_NEAR_EXPIRY` means
+refresh the plan rather than ask for approval. `nextGate` is one of
+`awaiting_codex_commit_review`, `awaiting_user_commit_approval`, `awaiting_commit_result`,
+`awaiting_push_ready`, `awaiting_codex_push_review`, `awaiting_user_push_approval`,
+`awaiting_push_verification`, `awaiting_push_result`, `delivered`, or
+`stopped_on_codex_verdict`. Every `awaiting_user_*` gate carries the notice
+`CODEX_PASS_IS_NOT_APPROVAL`; a delivered run is checked for integrity only.
 
 ### Changed-files manifest
 
@@ -865,6 +987,11 @@ anything on the user's behalf. Write the draft outside the repository, then run
   allowed files, the tests and gates required by the contract ran and pass. Do not rely
   on the request's claims alone. A stage with `checkpoint: null` has its contract in the
   request's `contract` and its stage report.
+- **Delivery review** (`--channel delivery`, the current commit-ready or push-ready
+  record): check the record against the repository and `safe-commit inspect` itself. For
+  commit-ready: the plan's files, closure delta, commit message, and manifest match the
+  implementation PASS. For push-ready: the commit, remote, target ref, endpoint hash, and
+  ahead/behind state match the intended push. A `PASS` is not approval.
 
 ### Safety
 

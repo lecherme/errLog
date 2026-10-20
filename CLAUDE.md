@@ -33,20 +33,33 @@ Only after the user approves the displayed plan, run exactly (the plan ID is the
 node tools/safe-commit.mjs commit --plan <plan-id> --json
 ```
 
-Do not add `--push`. Report the resulting commit SHA and remaining worktree changes.
+`commit` never pushes (`--push` was removed and fails before anything happens). Report
+the resulting commit SHA and remaining worktree changes.
 If the plan is stale or fails, return to `check`; never bypass the failure with Git.
 
 ### Separate push approval
 
 After a successful commit, ask separately whether to push that exact commit and name
-the destination remote and branch. Only after explicit approval,  run:
+the destination remote, the full target ref, and the endpoint hash (from the reviewed
+push-ready delivery record). Only after explicit approval, run:
 
 ```bash
-node tools/safe-commit.mjs push --plan <plan-id> --json
+node tools/safe-commit.mjs push --plan <plan-id> --endpoint-sha256 <hash> --target-ref refs/heads/<branch> --json
 ```
 
-If repository policy denies push, report `PUSH_DENIED`; do not fall back to direct
-`git push` or weaken `.safe-commit.json` without separate user authorization.
+safe-commit refuses the push before any network I/O if the endpoint or target ref no
+longer matches. If repository policy denies push, report `PUSH_DENIED`; do not fall back
+to direct `git push` or weaken `.safe-commit.json` without separate user authorization.
+
+If push fails after Git was invoked (`PUSH_FAILED`: the remote may still have received
+the commit), reports that verification failed after the push (`TRACKING_REF_UPDATE_FAILED`,
+`REMOTE_UNVERIFIED`, `PUSH_VERIFICATION_PENDING`), or that its outcome is unknown
+(`PUSH_OUTCOME_UNKNOWN`), stop and report; never retry the push directly. Only after the user separately approves
+recovery, run (it never pushes; a later real push still needs its own push approval):
+
+```bash
+node tools/safe-commit.mjs verify-push --plan <plan-id> --json
+```
 
 ### Forbidden bypasses
 
@@ -135,8 +148,8 @@ Full recovery protocol: see `docs/implementation-workflow.md`.
 ## Cross-agent review handoff
 
 A Codex cross review is a default gate of every stage; the user does not have to ask for
-it. `tools/stage-handoff.mjs` keeps two separate channels, `contract` and
-`implementation`; always pass `--channel`. Full protocol:
+it. `tools/stage-handoff.mjs` keeps three separate channels, `contract`,
+`implementation`, and `delivery`; always pass `--channel`. Full protocol:
 `docs/implementation-workflow.md` ("Cross-agent review handoff").
 
 - Every Stage Contract goes through a contract handoff before the user approves it:
@@ -155,6 +168,12 @@ it. `tools/stage-handoff.mjs` keeps two separate channels, `contract` and
   needs a new revision and a new `OK`.
 - Only an implementation `PASS` lets the stage continue to the task checkbox and
   safe-commit `check`.
+- The commit and push gates go through the delivery channel (`--channel delivery`):
+  after `check`, publish commit-ready and stop; after the user-approved commit, publish
+  commit-result and push-ready and stop; after the user-approved push, publish
+  push-result and stop. Run delivery `verify` (must be `valid`) right before the push.
+  A delivery `PASS` is not approval: commit and push each still need the user's own
+  approval, and never run in one command batch.
 - On `NEEDS_CHANGES`, `FAIL`, or `BLOCKED`, stop and report. A contract change or a fix
   needs the user's authorization and a new immutable revision; the same blocking finding
   gets at most two fix rounds.

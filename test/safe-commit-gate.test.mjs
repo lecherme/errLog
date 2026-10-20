@@ -27,13 +27,21 @@ test('allows only canonical read-only safe-commit commands without prompting', a
   );
 });
 
-test('asks separately for canonical commit and push commands', async () => {
+const hash = 'b'.repeat(64);
+const guarded = `--endpoint-sha256 ${hash} --target-ref refs/heads/feature/x-1.2`;
+
+test('asks separately for canonical commit, guarded push, and verify-push commands', async () => {
   assert.equal(
     await decision(`node tools/safe-commit.mjs commit --plan ${plan} --json`),
     'ask',
   );
   assert.equal(
-    await decision(`node tools/safe-commit.mjs push --plan ${plan} --json`),
+    await decision(`node tools/safe-commit.mjs push --plan ${plan} ${guarded} --json`),
+    'ask',
+  );
+  // verify-push queries the remote and writes plan state: a separate recovery approval.
+  assert.equal(
+    await decision(`node tools/safe-commit.mjs verify-push --plan ${plan} --json`),
     'ask',
   );
 });
@@ -45,9 +53,44 @@ test('denies noncanonical safe-commit commands and shell expansions', async () =
     `node tools/safe-commit.mjs commit --plan ${plan} --pu\\sh --json`,
     `node tools/safe-commit.mjs commit --plan ${plan} $'--push' --json`,
     `node tools/safe-commit.mjs commit --plan ${plan} "$(printf %s --push)" --json`,
+    `node tools/safe-commit.mjs commit --plan ${plan} --push ${guarded} --json`,
+    `node tools/safe-commit.mjs commit --plan ${plan} ${guarded} --push --json`,
+    `node tools/safe-commit.mjs commit --push --plan ${plan} ${guarded} --json`,
+    `node tools/safe-commit.mjs commit --plan ${plan} "--push" "--endpoint-sha256" "${hash}" --target-ref refs/heads/feature --json`,
     'node tools/safe-commit.mjs check --request "$(git add file)" --json',
     'node tools/safe-commit.mjs check --request <(git commit -m test) --json',
     `node tools/safe-commit.mjs commit --plan ${plan} --json && git push`,
+  ];
+  for (const command of commands) assert.equal(await decision(command), 'deny', command);
+});
+
+test('denies unguarded, malformed, or reordered push forms', async () => {
+  const commands = [
+    `node tools/safe-commit.mjs push --plan ${plan} --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --endpoint-sha256 ${hash} --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --target-ref refs/heads/feature --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --target-ref refs/heads/feature --endpoint-sha256 ${hash} --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --endpoint-sha256 ${'B'.repeat(64)} --target-ref refs/heads/feature --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --endpoint-sha256 ${hash.slice(1)} --target-ref refs/heads/feature --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --endpoint-sha256 ${hash} --target-ref refs/heads/a..b --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --endpoint-sha256 ${hash} --target-ref refs/tags/v1 --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --endpoint-sha256 ${hash} --target-ref feature --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} --endpoint-sha256 ${hash} --target-ref "refs/heads/feature" --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} ${guarded} --force --json`,
+    `node tools/safe-commit.mjs push --plan ${plan} ${guarded} --json; true`,
+  ];
+  for (const command of commands) assert.equal(await decision(command), 'deny', command);
+});
+
+test('denies malformed or noncanonical verify-push forms', async () => {
+  const commands = [
+    `node tools/safe-commit.mjs verify-push --plan ${plan}`,
+    `node tools/safe-commit.mjs verify-push --plan ${plan.slice(1)} --json`,
+    `node tools/safe-commit.mjs verify-push --plan ${plan} --json --push`,
+    `node tools/safe-commit.mjs verify-push --plan ${plan} ${guarded} --json`,
+    `node tools/safe-commit.mjs verify-push --plan "${plan}" --json`,
+    `node tools/safe-commit.mjs verify-push --plan ${plan} --json && git push`,
+    `node tools/safe-commit.mjs verify-push --plan $(cat plan) --json`,
   ];
   for (const command of commands) assert.equal(await decision(command), 'deny', command);
 });
