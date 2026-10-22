@@ -6,6 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "next typegen && tsc --noEmit",
     "db:migrate": "node-pg-migrate up -m db/migrations",
     "test:db": "node --test db/tests/schema-constraints.test.mjs",
     "db:seed:dev": "node db/seed/dev-seed.mjs",
@@ -21,6 +23,8 @@
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.0",
     "node-pg-migrate": "9.0.0",
     "typescript": "5.9.3"
   }

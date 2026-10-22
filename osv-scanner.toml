@@ -1,0 +1,9 @@
+# OSV-Scanner configuration, applied to every lockfile only through the explicit
+# `--config=/repo/osv-scanner.toml` in `scripts/ci.sh dependencies` (S1.5, Q6-A).
+# Exactly one time-boxed, report-only exception; `scripts/ci.sh` fails on any other entry
+# and on any change to this one. See docs/ci.md ("Dependency exception").
+
+[[IgnoredVulns]]
+id = "GHSA-vfj7-8cjw-p6xm"
+ignoreUntil = 2026-11-20
+reason = "CVE-2026-93687: braces <=3.0.3 stack exhaustion (CWE-674); no fixed version; braces@3.0.3 is dev-only via eslint-config-next (apps/web) and @fission-ai/openspec (scripts/ci-tools); re-evaluate on dependency change and before any production deployment; remove once a fix exists"

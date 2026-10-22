@@ -159,6 +159,9 @@ integration → user-journey E2E (from task 4.1; deterministic Playwright, no LL
 safe-commit's own tests → secret scanning → dependency vulnerability
 scanning → SAST/container scanning once applicable.
 
+The current checks, their single entry point `scripts/ci.sh` and the blocking policy are
+in `docs/ci.md`.
+
 ## Contract tests
 
 Established when each boundary is actually implemented, not pre-built. The five

@@ -7,25 +7,26 @@ This is a working document, not a spec artifact.
 
 - This section is the authoritative current handoff; later historical refinement notes
   may contain superseded point-in-time wording.
-- Handoff verified: 2026-10-16 (Asia/Shanghai).
+- Handoff verified: 2026-10-22 (Asia/Shanghai).
 - Planning baseline: completed and committed in `aff5550317f99a9acf82fc6c480d617fa18198e5`;
   later planning amendments (e.g. refine P1(12): design D21 + task 1.5; P1(15): task 1.4
   scope) are tracked through Git history, not by this SHA.
 - Implementation workflow is committed in `431413ee4484814002db0fe4022d1c87fe1a256e`;
-  the cross-agent review handoff was added in `f14fc6f` (H1) and made a default gate with
-  a contract channel in `f1a6d44` (H2).
-- Implementation progress: 4/89 tasks.
-- Application skeleton: stage S1.1 (task 1.1) committed in `e02c65f`; stage S1.2 (task 1.2)
-  committed in `c960445`; stage S1.3 (task 1.3) committed in `d297b45`; stage S1.4
-  (task 1.4) verified, reviewed and Codex `PASS`; ready for safe-commit.
-- Active Stage Contract: S1.4 (task 1.4 only) — contract handoff revision 2 Codex `OK`;
-  user-approved 2026-10-16 with Q1 = A, Q2 = A.
+  the cross-agent review handoff was added in `f14fc6f` (H1), made a default gate with
+  a contract channel in `f1a6d44` (H2), and gained the delivery channel and guarded push
+  in `681fe533` (H3).
+- Implementation progress: 5/89 tasks (1.5 checked in the S1.5 closing batch).
+- Application skeleton: S1.1 `e02c65f`, S1.2 `c960445`, S1.3 `d297b45`, S1.4 `ef84170`
+  (tasks 1.1–1.4), all committed and pushed.
+- Active Stage Contract: S1.5 (task 1.5 only) — contract handoff revision 6 Codex `OK`;
+  user-approved 2026-10-22 with Q1–Q7 = A (supersedes the revision 2 approval).
 - Active Implementation Checkpoint: see "Implementation Checkpoint" section below.
-- Repository-local remote CI configuration observed at handoff: none; every new session
-  must re-check actual remote CI/check status rather than trust this snapshot.
-- Git state observed before opening this checkpoint edit: clean and synchronized with
-  `origin/experiment/install-opsx-refine` at `64556a6`; every new session must
-  re-inspect branch/HEAD/upstream/worktree.
+- Repository-local remote CI configuration observed at handoff: none committed (the
+  S1.5 workflow exists only in the uncommitted worktree); every new session must re-check
+  actual remote CI/check status rather than trust this snapshot.
+- Git state observed before this checkpoint edit: HEAD `681fe533`, synchronized with
+  `origin/experiment/install-opsx-refine`; the worktree holds the uncommitted S1.5
+  work listed below; every new session must re-inspect branch/HEAD/upstream/worktree.
 - Next action: follow the Implementation Checkpoint below.
 - Historical snapshots further below in this file (e.g. "Not yet written into any
   artifact", "These are not yet reflected in any artifact", "No implementation code
@@ -35,275 +36,321 @@ This is a working document, not a spec artifact.
 
 ## Implementation Checkpoint
 
-- Stage ID: S1.4
-- OpenSpec task IDs: 1.4
+- Stage ID: S1.5
+- OpenSpec task IDs: 1.5
 - stageState: ready_for_safe_commit
-- Last updated: 2026-10-16 (Asia/Shanghai)
-- User approval: Stage Contract S1.4 revision 2 approved by the user 2026-10-16, after
-  Codex contract review `OK` (contract run `20261014T071001Z-21a6d284`, request
-  `0002-contract-request.json`, `contractSha256`
-  `sha256:8fc50532ebff3c2f9fe1ceeba257429d5693dcca2c6d3ff798f7bda982e9546d`).
-  Choices: **Q1 = A** (exclude `db/seed` from the web image via `.dockerignore`;
-  read-only bind mount for local runs); **Q2 = A** (provider `'dev-seed'`).
-  The user also adopted the Codex response's non-blocking advice, as an implementation
-  detail of the approved contract (no contract text change):
-  - (N1) an existing `dev-seed` identity whose `provider_subject` or current Child
-    `display_name` differs from the fixed fixture values is an inconsistent state:
-    fail without writes, never accept it as the fixture;
-  - the rejected mismatched-user/Child `grading_session` probe runs behind a savepoint
-    (or in its own rolled-back transaction), since a constraint error aborts the
-    surrounding transaction.
-- Allowed paths: `apps/web/db/seed/dev-seed.mjs` (new); `apps/web/db/seed/dev-seed.test.mjs`
-  (new); `apps/web/.dockerignore` (one line `db/seed`); `apps/web/package.json` (two
-  scripts only); `README.md` (Dev seed subsection under Local development stack); this
-  file (checkpoint + handoff status lines); `tasks.md` (1.4 checkbox only).
-- Work completed: checkpoint written (replaces the stale S1.3 checkpoint/handoff block);
-  V0–V8; seed module + CLI `apps/web/db/seed/dev-seed.mjs`; test
-  `apps/web/db/seed/dev-seed.test.mjs`; `.dockerignore` line `db/seed`; scripts
-  `db:seed:dev`/`test:dev-seed`; README "Dev seed" subsection; local gate + scope gate.
-- V0 (2026-10-16, read-only): `COMPOSE_PROJECT_NAME` unset; Compose v5.1.3; temp project
-  `errlog-v14-20261016065114` (volume `errlog-v14-20261016065114_pgdata`); `web` has no
-  environment keys; `errlog-dev_pgdata` absent.
-- V1 failing evidence: `node --test db/seed/dev-seed.test.mjs` before the module existed
-  → `ERR_MODULE_NOT_FOUND`, exit 1; no `db:seed:dev` script, no CLI.
-- V2: temp `web` image built (`next build` ok); `/app/db` holds only `migrations`/`tests`
-  (`db/seed` absent); `npm run db:seed:dev` in the image → `Cannot find module`, exit 1.
-- V3: fresh `db:migrate` ok; `test:db` 11/11 pass (regression).
-- V4: `test:dev-seed` via read-only bind mount 9/9 pass; afterwards all 8 tables have 0
-  rows. Without `ERRLOG_SCHEMA_TEST_DATABASE_URL` all 9 tests fail (exit 1). Mutations
-  (drop the provider_subject check; drop the current-Child display_name check; print the
-  connection string on error) each fail exactly the matching test.
-- V5: CLI run 1 → `created`, run 2 → `existing` with the same three UUIDs; rows 1/1/1,
-  `grading_session` 0, fixture values and ownership as specified; without
-  `ERRLOG_DEV_SEED_DATABASE_URL` → refused, exit 1. Extra (probe DBs in the temp server,
-  dropped afterwards): two parallel CLI runs serialized (`created` + `existing`, 1/1/1);
-  a two-connection probe (A seeds, B seeds concurrently, A commits) → B fails with
-  23505 `identity_provider_subject_key` and rolls back, rows 1/1/1.
-- V6: normal `up --wait web` healthy, HTTP 200; web env has no DB variable; no
-  `/app/db/seed` in the running web container.
-- V7: the temporary password is absent from all evidence, scripts, repo files
-  (including `.agent-handoffs/`) and this checkpoint, re-checked after the README edit.
-- V8: `down` (no `-v`); volume and image removed by exact name after verifying label
-  `com.docker.compose.project`; no T containers/networks/volumes/images remain;
-  before/after snapshots identical; `errlog-dev_pgdata` still absent; password file
-  deleted.
-- Local gate: `node --test test/` 53/53; `openspec validate --strict` valid; progress
-  3/89. Scope gate: modified `README.md`, `apps/web/.dockerignore` (+1 line),
-  `apps/web/package.json` (+2 scripts), this file; new `apps/web/db/seed/dev-seed.mjs`,
-  `apps/web/db/seed/dev-seed.test.mjs`; `tasks.md` unchanged.
-- Evidence (session temp dir, not committed): `ev/` (V0/V8 snapshots, build, migrate,
-  test, mutation, CLI, probe and scan logs), `probe/conflict.mjs`, `mut/`.
-- Implementation handoff: run `20261016T070105Z-0c4b44d4`, revision 1 (request SHA-256
-  `72754e24…853c`); Codex verdict `PASS`, no blocking; its three non-blocking findings
-  match N-a/N-b/N-c below (Codex also confirmed the malformed-URL path redacts the input
-  and emits no credential); `verify` valid, `nextGate` `codex_pass`.
-- After checking 1.4 (2026-10-16): `openspec validate --strict` valid; progress 4/89;
-  the `tasks.md` diff is only the 1.4 checkbox; `node --test test/` 53/53.
-- Work remaining: safe-commit `check` → user approval → `commit` → separate push
-  approval → `push`.
-- Tests not yet run: none for this stage.
-- Reviewer findings, round 1 (fresh read-only general-purpose reviewer; the
-  `stage-reviewer` agent definition is created only by 4.1): verdict PASS, no blocking.
-  Recorded, not changed (no fix after review, so no re-verification needed):
-  (N-a) `new pg.Client(...)` is constructed before the CLI's `try`, so a malformed
-  connection string ends in an uncaught stack trace instead of the one-line message;
-  still exit 1 and no credential in the reviewer's probes, but not covered by a test;
-  (N-b) an existing `dev-seed` Identity with the fixture `provider_subject` but a
-  different `identifier` is not found by the `(provider, identifier)` lookup and fails
-  on the unique constraint (23505) with rollback: fail-closed without writes, but as a
-  raw error, so the README's "reported as inconsistent" is slightly broader than the
-  code; (N-c) V8 volume/image removal is evidenced only indirectly (identical
-  before/after snapshots).
-- Files expected in worktree: the six files listed under Scope gate plus `tasks.md`
-  (1.4 checked).
+- Last updated: 2026-10-22 (Asia/Shanghai)
+- User approval: Stage Contract S1.5 revision 6 approved by the user 2026-10-22, after
+  Codex contract review `OK` (contract run `20261020T093943Z-2a7d227d`, request
+  `0006-contract-request.json`, `contractSha256`
+  `sha256:3e0a0a4b5b3531838cd54b191f74986bae45d401147ef90e7be367ed20f90233`).
+  The earlier revision 2 approval (2026-10-21) is superseded. Choices:
+  - **Q1 = A**: ESLint + eslint-config-next (exact-version devDependencies, flat
+    `apps/web/eslint.config.mjs`, `npm run lint`);
+  - **Q2 = A**: one Node version, 24.21.0, pinned in `.node-version`; `scripts/ci.sh`
+    fails on any other version (the local gate needs Node 24.21.0);
+  - **Q3 = A**: `node --test 'test/*.test.mjs'`, all four current test files; fewer
+    than four files fails;
+  - **Q4 = A**: gitleaks + OSV-Scanner, official images pinned by digest;
+  - **Q5 = A**: after the first push the user checks, in the GitHub UI, the final
+    conclusion of the `ci` workflow run (push event) for the exact pushed commit SHA;
+    only `success` for that SHA counts as passed;
+  - **Q6 = A**: time-boxed report-only exception for GHSA-vfj7-8cjw-p6xm only (one
+    `osv-scanner.toml` entry, `ignoreUntil` 2026-11-20, exact `--config`, guards and
+    the no-config self-check), accepted under the contract's threat model;
+  - **Q7 = A**: the paired transitive upgrades (`baseline-browser-mapping`
+    2.11.28→2.11.30, `caniuse-lite` 1.0.30001815→1.0.30001817) plus the `semver`
+    `devOptional` flag change are approved together.
+- Allowed paths: exactly the "Exact paths allowed to change" list of the approved
+  contract below (15 paths).
+- Work completed (under revision 2, kept): failing evidence F0 (`scripts/ci.sh` absent →
+  exit 127); pins resolved (actions/checkout v7.0.1, actions/setup-node v7.0.0,
+  actionlint 1.7.12, gitleaks v8.30.1, osv-scanner v2.6.0, images by digest; Node 24.21.0
+  tarball checksum-verified in the session scratchpad, not installed globally); eslint
+  9.39.5 + eslint-config-next 16.4.0 with `lint`/`typecheck` and
+  `apps/web/eslint.config.mjs`; `scripts/ci-tools/`; `.node-version`; `scripts/ci.sh`;
+  `.github/workflows/ci.yml`. Local passes: `workflow`, `openspec`, `python`, `web`,
+  `node-tests` (85/85, no Git config), `secrets` (19 commits + worktree, no leaks).
+- Work completed (under revision 6, 2026-10-22): sub-step 5a: `osv-scanner.toml` (one
+  entry), `scripts/ci.sh dependencies` exception guards, OSV fixed-version check, exact
+  `--config` scan, no-config self-check (exit code captured) and report-only line;
+  `node-tests` fails on fewer than four test files; `docs/ci.md`, README "CI", the
+  workflow-doc pointer and the SSDF rows/gaps. Local results (Node 24.21.0):
+  `scripts/ci.sh all` exit 0 (116 s), and each check passes on its own; failing evidence
+  for every check (workflow A1–A9/P1–P4, openspec, node-tests, web lint/type, python,
+  secrets, dependencies D1–D11, compose C1–C4) fails as required; compose cleanup leaves
+  no `errlog-ci-*` resource and `errlog-dev` resources are unchanged; no synthetic
+  password in any log; scope gate: changed paths ⊆ allowed paths, web lockfile delta =
+  new packages + the Q7 pair + `semver` flag.
+- Independent stage review (fresh read-only general-purpose sub-agent, round 1): PASS,
+  no blocking findings. Non-blocking fixes applied: SSDF PO.5 status `implemented` and
+  remote-CI wording limited to what is configured; the then-existing project-name
+  override documented in `docs/ci.md` (removed by the B1 fix below); C1–C3 evidence
+  regenerated by a kept script; `secrets`, `openspec`, `workflow` re-run after the doc
+  edits (exit 0). Not changed: temp `HOME`/tree copies are left in `/tmp` when a check
+  fails (cosmetic). `scripts/ci.sh` must be committed as 100755.
+- Implementation handoff revision 1 (run `20261022T015811Z-37fcaebd`): Codex `FAIL`, one
+  blocking finding B1 (the project-name override could point a run at an existing or
+  concurrent `errlog-ci-*` project, whose objects the exit trap would then remove).
+  User authorized 2026-10-22 a fix of B1 only (fix round 1 of at most 2) and the
+  reclassification of the two non-material deviations.
+- B1 fix (round 1): `scripts/ci.sh compose` no longer accepts a project name from the
+  environment; it generates `errlog-ci-<GitHub run id or local>-<128 random bits>` and,
+  before the exit trap is installed, fails if any container, volume, network or image is
+  labelled with or named after that project (a Docker listing error also fails), so a run
+  only ever removes what it created. `docs/ci.md` and SSDF PO.5 wording updated.
+  Evidence: the rev1 script with the override on a synthetic existing project removed its
+  containers, data volume and image (failing first); the fixed guard refuses a full
+  existing project and each object kind alone with every object unchanged, fails closed
+  when Docker is unreachable, and real runs alone and two concurrently pass with the
+  existing project unchanged and nothing left behind. `scripts/ci.sh all` exit 0
+  (125 s, Docker state identical, no password in the log); scope gate: 14 changed paths,
+  all allowed.
+- Implementation and evidence notes (reclassified from "contract deviations" after the
+  Codex review; none needs user approval): the `osv-scanner.toml` guard pins
+  `ignoreUntil` to exactly the contract date 2026-11-20, so extending it needs a change
+  to `scripts/ci.sh`; the workflow failing cases ran on temp copies with an empty `.git`
+  directory (actionlint needs one), and the secrets case planted its synthetic string in
+  a temporary untracked worktree directory that was removed afterwards. The contract
+  deviations list is now empty.
+- Independent re-review (round 2): PASS, no blocking findings; its doc-wording fix
+  applied (`docs/ci.md`: only the run-id part of the name comes from the environment; the
+  check-to-build window is named), `secrets` re-run exit 0.
+- Implementation handoff revision 2 (`targeted_fix`, request
+  `0002-review-ready.json`): Codex `PASS`, verified `valid` 2026-10-22; B1 closed.
+- Closure (2026-10-22): task 1.5 checked (`tasks.md` differs from HEAD only by that
+  checkbox; progress 5/89); `openspec validate --strict` valid; `secrets` exit 0; final
+  scope gate: 15 changed paths, all allowed, nothing staged, `scripts/ci.sh` mode 755
+  (must be committed as 100755).
+- Work remaining: safe-commit `check` of this batch (stage files, `tasks.md` and this
+  checkpoint), delivery commit-ready, then the user-approved commit and the separate push
+  gate; after the push the user reports the `ci` run conclusion for the exact pushed SHA.
+- Tests not yet run: remote CI (first run after the push).
 - Blockers: none.
-- Next action: run safe-commit `check` for S1.4 (7 files) and wait for user approval
-  of the plan.
+- Next action: run safe-commit `check`, publish delivery commit-ready, and stop for the
+  user's separate commit approval.
 
-### Approved Stage Contract S1.4 (revision 2, verbatim)
+### Approved Stage Contract S1.5 (revision 6, verbatim)
 
 The fenced block is the exact `contractText` of the approved contract request.
 
 ````markdown
-# Stage Contract S1.4 — 本地开发 fixture 数据前置条件（revision 2 草案）
+# Stage Contract S1.5 — 初始远程 CI（GitHub Actions）（revision 6 草案）
 
-## 相对 revision 1 的变更
-- 依据 P1(15)（commit 64556a6）重写：task 1.4 只负责创建并验证 synthetic local-dev fixture 数据前置条件；本 stage 不证明 caller context、应用工作流或浏览器旅程。
-- 首次 caller-context 正向证明归 task 2.5；首次浏览器用户旅程归 task 4.1。
-- 被 seed 的 Identity 统一称为 local-dev fixture identity：不是 allowlist 条目、不是登录入口、不是生产认证路径。
-- 旧 Q3（allowlisted 含义）和旧 Q4（"驱动流程"的范围）已被 P1(15) 消除，不再保留；Q1、Q2 仍待用户选择。
-- 1.4(c) 的 GradingSession 探针明确为测试内、事务内、回滚的探针，不属于 seed 输出（吸收 P1(15) reviewer 意见）。
-- 补充清理说明：数据库测试一律回滚；临时 Compose project 的清理范围与禁止项写明。
+## 相对 revision 5 的变更（Codex B4，第 1 轮）
+- B4：Q3-A 及其 rationale 改为以 `node --test 'test/*.test.mjs'` 运行全部四个现有测试文件，少于四个文件即失败；Q3 决定范围（四个文件），R2 决定 Node 24 兼容的 glob 写法。
+
+## 相对 revision 4 的变更（revision 5，B3 已解决）
+- B3：现行批准、checkpoint 与操作引用统一指向当前 revision；Q7 排除项为整体批准；无 config 自检显式捕获退出码（守卫 5）。
+
+## 相对 revision 2 的变更（user_revision）
+来源：revision 2 经 Codex `OK`、用户于 2026-10-21 批准（Q1–Q5 = A）后开始实施；实施中依赖扫描 baseline 发现一项无修复版本的真实漏洞，按 revision 2 "停止并报告用户"，实施已停止；用户随后要求就该 blocker 与已发现的实施偏差修订本合同。revision 2 的批准不延伸到本 revision：当前 revision（revision 6）需要新的 Codex `OK` 与用户的重新批准（含 Q1–Q5 的再次确认与 Q6、Q7）。已完成的工作保留在工作树中，本 revision 发布前不修改任何实现文件。
+- R1 braces（Q6）：为 GHSA-vfj7-8cjw-p6xm / CVE-2026-93687 定义逐项、限时的 report-only exception 及其自动失效条件（见"依赖漏洞 exception"）；其他 finding 与工具错误仍 fail closed。
+- R2 node-tests：命令由 `node --test test/` 改为 `node --test 'test/*.test.mjs'`：Node 24 不再接受目录参数（`Cannot find module …/test`）；运行同样四个文件，范围不减少。
+- R3 传递升级（Q7）：新增 ESLint 依赖使两个既有传递依赖升级，须由用户明确批准或拒绝（revision 4 起作为一对整体决定）；原合同的"既有依赖不升级"排除项不被视为已允许它们。
+- R4 ESLint 9 支持状态：记录事实与后续升级触发条件（见"工具链事实与前置条件"）。
+- R5 Node 24.21.0 本地前置条件：如实记录当前环境，并要求 `docs/ci.md` 说明新环境如何准备 Node 24.21.0。
+- 路径：`.gitleaks.toml` 移除（secret baseline 无发现，无需忽略项）；`.gitignore` 移除（已有的 `node_modules/` 规则已覆盖 `scripts/ci-tools/node_modules/`）；`osv-scanner.toml` 改为本 exception 的确定文件。
+
+## 已完成的工作（revision 2 下，保留）
+- 失败证据 F0：入口不存在时 `scripts/ci.sh all` 退出 127。
+- 固定（取发布满两周的最新版）：actions/checkout v7.0.1、actions/setup-node v7.0.0（均为完整 SHA）、actionlint 1.7.12、gitleaks v8.30.1、osv-scanner v2.6.0（镜像按 digest）。
+- 文件：`apps/web` 的 eslint 9.39.5、eslint-config-next 16.4.0、`lint`/`typecheck`、`eslint.config.mjs`；`scripts/ci-tools/`（openspec 1.10.0、yaml 2.9.1）；`.node-version`；`scripts/ci.sh`；`ci.yml`。
+- 本地（Node 24.21.0）已通过：`workflow`、`openspec`、`python`、`web`（未改产品代码）、`node-tests`（85/85，无 Git 配置）、`secrets`（19 个 commit 与工作树，无发现）。
+- 未完成：`dependencies`（被 R1 阻塞）、`compose`、其余失败与清理证据、文档、完整 gate、reviewer、handoff。
 
 ## Stage ID
-S1.4
+S1.5
 
 ## OpenSpec task IDs
-1.4（仅此一项）
+1.5（仅此一项）
 
 ## Expected outcome
-- 新增一个本地开发专用的 seed 命令。在一个已迁移的数据库中，它用一个事务插入同一组 synthetic fixture 记录：
-  - 1 个 `app_user`；
-  - 1 个 `identity`（local-dev fixture identity）；
-  - 1 个 `child`，`display_name` 已规范化且非空；
-  - 同时把该 User 的 `current_child_id` 设为这个 Child。
-- 这些记录只是后续 stage 消费的数据前置条件：2.5 用它做首次 caller-context/ownership 访问检查，4.1 把它作为首个浏览器旅程中明确标注的旅程前置条件（D22）。
-- 本 stage 不证明 caller context、应用工作流或用户旅程，也不实现它们。
-- 该 Identity 不是 allowlist 条目，不是登录入口，也不是生产认证路径：
-  - Group 5 之前不存在 allowlist 或 OTP 机制，5.4 才会替换此路径；
-  - seed 代码不在生产镜像里，不暴露 HTTP 路由，不被 Next.js 应用代码 import；
-  - 13.4 会在生产配置下复验它不可达。
-- 重复运行是幂等的：
-  - 已存在时不写入、不修改任何记录，只报告已有的 id；
-  - 遇到不一致的残缺状态时报错退出，不做修复。
-- 命令只输出合成标识和 UUID（JSON），不输出连接串或密码。
+1. 仓库获得唯一一条 GitHub Actions 验证 pipeline `.github/workflows/ci.yml`，由 `push` 与 `pull_request` 触发，只覆盖 Group 1（1.1–1.4）结束时真实存在的代码与配置。
+2. 唯一文档化的本地入口 `scripts/ci.sh`：`scripts/ci.sh all` 依次运行全部检查，`scripts/ci.sh <check>` 运行单项；CI 的每个 job 只执行 `scripts/ci.sh <check>`，不存在只在 CI 中出现的命令，也不存在更弱的本地替代。
+3. `docs/ci.md` 记录检查清单、本地入口、所选扫描工具、首次 baseline 及阻塞策略（什么使运行失败、什么仅报告、原因）。
+4. `docs/security/ssdf-profile.md` 只把实际达到的控制更新到实际状态。
+5. task 1.5 勾选；本阶段不新增任何用户可见行为。
 
 ## Requirement / Scenario / Design 追溯
-- tasks.md 1.4（P1(15) 之后的文本），逐条对应：
-  - (a) 新迁移的隔离库上恰好创建该 User/Identity/Child，`currentChildId` 指向其本人的 Child，`displayName` 规范化且非空 → V4 测试与 V5 CLI 运行；
-  - (b) 重复运行不产生重复、不改变数据 → 幂等测试（前后全表快照一致）与 V5 第二次运行；
-  - (c) seed 记录满足 1.3 的归属约束 → 回滚的 GradingSession 探针测试；
-  - (d) 只用合成数据，不需要真实凭据 → 固定合成值、secret 扫描。
-- tasks.md 1.4 末句："This task does not itself prove caller-context access or a user journey"。所以本合同不加 caller-context 机制，也不加旅程证明。
-- D2（身份模型）：User 与 Identity 分离，Identity 记录 `provider` / `provider_subject` / `identifier`。
-- D4 与 child-profile spec："当前孩子指针的归属与有效性"：
-  - `currentChildId` 指向本人拥有的 Child；
-  - 首个 Child 立即成为当前孩子；
-  - `displayName` 规范化后非空（1.3 的 `child_display_name_normalized_check` 是第二道防线）。
-- access-control spec："MVP 为家庭单账号使用场景"。dev seed 不得成为生产中绕过认证的入口。
-- Migration Plan：生产环境的 User 由首次 OTP 登录创建（5.4），不手工 seed。
-- D22 与 CLAUDE.md：手动走查不是产品 E2E。1.4 的 fixture identity 只作为 4.1 明确标注的旅程前置条件，不得称为登录 E2E。
-- 下游消费：
-  - 2.5：首次 caller-context 正向证明（为该 identity 拥有的资产签发 URL），以及两项拒绝检查；
-  - 4.1：旅程前置条件；
-  - 1.5(g)：本 stage 的 `test:dev-seed` 可作为可自动运行的 seed smoke test。
-- 下游复验：13.4（生产中不可用）。
+- tasks.md 1.5 全文（检查 (a)–(j)、D21 供应链约束、(i)(j) baseline 规则、单一 pipeline、禁止 Playwright/E2E 占位、13.2 不属本 pipeline），以及其 Verify 条款：workflow 定义须通过可本地运行的静态检查（`actionlint` 或等价工具）；每个 CI 等价检查在最终树上本地通过；勾选只需该本地验证加标准独立 review，推送后的首次远程运行是 post-push 复验，不是本 task commit 的前提。
+- design.md D21（同一验证链、两个执行位置、命令等价、只验证真实存在的能力、数据与凭据、最小 GITHUB_TOKEN、action 锁定 SHA、禁用 pull_request_target、扫描阻塞策略依 baseline、远程失败处理）；D22（E2E 由 4.1 首次接入，1.5 不预建占位）。
+- docs/implementation-workflow.md "CI"（本地 gate 与 post-push 远程 CI 分层）、"Session continuity and recovery"（远程 CI 状态检查）、"Cross-agent review handoff"（delivery channel）。
+- docs/security/ssdf-profile.md：PO.3、PO.5、PS.1、PW.8、RV.1 行与 "Current gaps"。
+- D21 明确本决策不对应任何 proposal/capability spec Requirement；本阶段不改变产品语义。
 
 ## Dependencies
-- 1.3 的 schema（`1791859549619_initial-schema.sql`）：不修改，也不新增 migration。
-- 现有依赖 `pg@8.23.0`：不新增依赖，`package-lock.json` 不变。
-- 1.1/1.2 的 Compose 骨架。验证只在临时 Compose project 中进行。
+- 1.1–1.4 已提交并推送（HEAD `681fe533`，与 upstream 一致）；H1–H3 工作流工具已推送。
+- 远程为 GitHub（`origin` 为 github.com 仓库）。仓库 Actions 是否启用属于用户的仓库设置，见 Q5。
+- 本地：Docker 29.4.3、Compose v5.1.3、OpenSpec 1.10.0；宿主 Node 为 v20.20.2，而 `apps/web/Dockerfile` 使用 node 24.21.0，见 Q2。宿主没有 gh、gitleaks、osv-scanner。
+- Node 24.21.0（R5）：宿主没有 Node 版本管理器，也没有全局安装 Node 24。本阶段的本地验证只使用会话临时目录中的官方发行包 `node-v24.21.0-linux-x64.tar.xz`，其 SHA-256 已按 nodejs.org 的 `SHASUMS256.txt` 校验（未校验该文件的 GPG 签名），仅通过该进程的 `PATH` 使用；不声称已全局安装。`docs/ci.md` 必须说明新环境如何准备 Node 24.21.0（读取 `.node-version` 的版本管理器，或官方发行包加 `SHASUMS256.txt` 校验，可选验证其签名），以及 `scripts/ci.sh` 在版本不符时失败。
 
-## 设计（随本合同一起批准；Q1、Q2 的选择以用户明确选定为准）
-- **Seed 模块** `apps/web/db/seed/dev-seed.mjs`：
-  - 导出 `seedDevIdentity(client)`，在调用方提供的事务内执行；
-  - 同时提供 CLI 入口：自行 `BEGIN`，成功后 `COMMIT`，任何错误都 `ROLLBACK` 并以非零码退出。
-- **固定的合成值**（按 Q2 推荐项 A 起草；全部是合成数据，不含真实邮箱或手机号）：
-  - `identity.provider = 'dev-seed'`
-  - `identity.provider_subject = 'dev-seed:dev-parent'`
-  - `identity.identifier = 'dev-parent@example.test'`（`.test` 是保留 TLD）
-  - `child.display_name = 'Dev Child'`（已规范化：无首尾空白、非空）
-- **幂等规则**：
-  - 先按 `(provider, identifier)` 查 identity；
-  - 已存在：校验该 User 的 `current_child_id` 非空且指向其本人的 Child，然后输出 `{"status":"existing",...}`，不写任何记录；
-  - 状态不一致：报错退出，不修复；
-  - 不存在：插入 user → identity → child，再设置 `current_child_id`，输出 `{"status":"created",...}`；
-  - 并发运行时由 `identity` 的唯一约束保证只创建一份，失败的那次整体回滚。
-- **seed 只写这三张表**：它不创建 `grading_session` 或任何其他业务记录。1.4(c) 的 GradingSession 只是测试里的探针（见 Test requirements）。
-- **连接串**：只读 `ERRLOG_DEV_SEED_DATABASE_URL`，不读 `DATABASE_URL`，从不打印；未设置时立即拒绝，不连接数据库。它只是本地数据库连接，不是任何真实账号凭据。
-- **生产隔离**（按 Q1 推荐项 A 起草）：
-  - 在 `apps/web/.dockerignore` 中排除 `db/seed`，web 镜像（也就是生产构建）中不含 seed 代码；
-  - 本地运行时用只读 bind mount 把 `apps/web/db/seed` 挂进一次性 web 容器；
-  - 应用代码不 import 它，也没有任何路由。
-- **npm scripts**：
-  - `db:seed:dev`：`node db/seed/dev-seed.mjs`
-  - `test:dev-seed`：`node --test db/seed/dev-seed.test.mjs`
-  - 在生产镜像中它们指向不存在的文件，执行即失败。
-- 如果用户在 Q1 或 Q2 选 B，本节相应部分改写，并发布新的 contract revision 交 Codex 复审；不按本草案直接实施。
+## 已发现的需求缺口与需用户决定的问题（开始实施前必须确定）
+- G1（Q1）：1.5 (c) 要求 "Next.js lint"，但 Next.js 16.4 已无 `next lint`，仓库也没有 ESLint；lint 只能通过新增 ESLint 工具链实现。
+- G2（Q2）：命令等价要求本地与 CI 运行同一 Node；宿主 Node 20.20.2 与镜像 Node 24.21.0 不一致。
+- G3（Q3）：(b) 只点名两个 safe-commit 测试文件，但 `test/` 下另有两个 stage-handoff 测试文件，已是本地 gate 的一部分。D21 与 task 1.5 禁止 CI 弱于本地 gate，因此本合同内只有 Q3-A（全部四个文件）可实施；只运行两个须先经 OpenSpec/workflow refine。
+- G4（Q4）：(i)(j) 需要选定工具。
+- G5（Q5）：bootstrap——远程 CI 尚不存在，本阶段 commit 推送后才产生第一次运行；宿主没有 gh，远程结果如何读取需用户决定。
+以上均不改变产品语义；如用户选择的选项需要修改 OpenSpec 文本，则先回到 refine，不在本阶段擅自修改 tasks/design。
+
+## 设计
+### 检查清单（每项一个 `scripts/ci.sh` 子命令，对应一个 CI job）
+- `openspec`：(a) `openspec validate "math-error-correction-mvp" --strict`，CLI 固定为 README 记录的 `@fission-ai/openspec@1.10.0`，经 `scripts/ci-tools/package.json` + `package-lock.json`（含 integrity）`npm ci --ignore-scripts` 安装，从 `scripts/ci-tools/node_modules/.bin` 调用；不使用全局安装或无锁 `npx`。
+- `node-tests`：(b) `node --test 'test/*.test.mjs'` 运行 `test/` 下全部四个测试文件（两个 safe-commit 测试文件与两个 stage-handoff 测试文件；Q3-A）。这是现有本地 gate 命令 `node --test test/` 在 Node 24 上的等价形式（R2）：glob 由 Node 展开，匹配同样的四个文件；证据须列出实际运行的四个文件与测试总数（当前 85），少于四个文件即视为失败。在隔离环境中运行：临时 `HOME`、`GIT_CONFIG_GLOBAL=/dev/null`、`GIT_CONFIG_NOSYSTEM=1`，使本地复现 runner 的"无全局 Git 配置"状态；如测试需要提交身份，入口只设置合成的 `GIT_AUTHOR_*`/`GIT_COMMITTER_*`（`ci@example.invalid`），不修改测试文件。若测试在干净环境下需要修改测试文件才能通过，停止并报告。
+- `web`：(c) 在 `apps/web` 中 `npm ci --ignore-scripts`（与 Dockerfile 相同），然后 `npm run lint`（Q1）、`npm run typecheck`（`next typegen && tsc --noEmit`）、`npm run build`。
+- `python`：(h) 在与 compose 相同的 `python:3.13.16-slim-bookworm` 镜像中，以只读挂载对 `services/pdf-processing/app.py` 做语法/编译检查（`PYTHONPYCACHEPREFIX` 指向容器内临时目录，不写仓库）。不创建、不占位、不声称 Group 3 PDF Processing Service 测试套件。
+- `compose`：(d)(e)(f)(g) 与三容器健康/连通，全部在一次性 Compose 项目中：
+  1. 项目名 `errlog-ci-<GITHUB_RUN_ID 或随机后缀>`；入口拒绝 `errlog-dev` 及任何不以 `errlog-ci-` 开头的名字，并拒绝已设置的 `COMPOSE_PROJECT_NAME`；
+  2. 每次运行生成随机合成 `POSTGRES_PASSWORD`（只在该进程环境中，从不打印、不写文件、不进日志或证据）；`ERRLOG_WEB_PORT` 取一个空闲的 loopback 端口，避免与本地 `errlog-dev` 的 3100 冲突；
+  3. `docker compose -p <ci> config --quiet`（d）；`docker compose -p <ci> build`（e）；
+  4. `up -d --wait db`；用与 compose `db` 相同的 `postgres:18.6-bookworm` 新库执行 `npm run db:migrate`（f），再次执行须报告无待运行迁移；`test:db`；`test:dev-seed`（g，只读挂载 `db/seed`，按 README 命令）；
+  5. `up -d --wait` 三服务全部 healthy，然后运行 README 的五条按服务名连通检查；
+  6. `trap` 中执行 `docker compose -p <ci> down -v --rmi local --remove-orphans`，无论成败都清理；只清理该项目自身资源，绝不 `prune`，绝不触碰 `errlog-dev` 或 `errlog-dev_pgdata`。
+- `secrets`：(i) 基础 secret scanning（Q4），扫描完整 Git 历史与当前工作树；CI checkout 使用 `fetch-depth: 0`。
+- `dependencies`：(j) 依赖漏洞扫描（Q4），覆盖届时存在的全部 lockfile：`apps/web/package-lock.json`、`scripts/ci-tools/package-lock.json`；Python 目前没有依赖清单，`docs/ci.md` 如实记录。
+- `workflow`：对 `.github/workflows/` 的两层静态检查，本地与 CI 运行同一命令、同一镜像：
+  1. actionlint（task 1.5 Verify 条款）：以官方 actionlint 容器镜像运行，镜像按 digest 固定（实施时从官方发布解析，版本与 digest 记录在 `docs/ci.md` 与 `scripts/ci.sh`）；只读挂载仓库，解析 YAML 并校验 workflow schema、触发器、`runs-on`、`permissions`、`${{ }}` 表达式与上下文、job 依赖及 action 输入；镜像内自带的 shellcheck 集成若可用，则一并检查 `run:` 脚本，实际启用情况如实记录。任何 actionlint 报告或工具错误都使检查失败。
+  2. 仓库专属策略检查（actionlint 不覆盖）：每个 `uses:` 必须是 40 位十六进制 commit SHA（附版本注释）；存在顶层与每个 job 的 `permissions: contents: read`；不出现 `pull_request_target`、`secrets.`、`continue-on-error`、`|| true`；每个 job 的 `run:` 只调用 `scripts/ci.sh <check>`（checkout/setup 等 `uses:` 步骤除外）。
+- `all`：按 workflow → openspec → node-tests → python → web → secrets → dependencies → compose 顺序运行，任一失败立即以非零退出，并打印失败的检查名。
+
+### 扫描工具与阻塞策略框架（Q4；具体策略在首次 baseline 后写入 docs/ci.md）
+- 外部工具只以容器镜像运行，镜像按 digest 固定（实施时从官方发布解析并记录版本），本地与 CI 使用同一镜像；不通过 curl 下载未校验的二进制。
+- 实施时先在当前仓库运行一次，记录 baseline（发现数、类别、文件，不记录 secret 值本身）。
+- 默认策略：任何发现都使运行失败。不使用整目录或通配忽略，不设凭空的严重度阈值。
+- 已记录的 baseline：secret scanning 无发现，因此没有 `.gitleaks.toml`；依赖扫描发现一项真实漏洞，唯一处理方式见下一节，其余任何 finding 都使运行失败。
+- 依赖扫描今后若再发现真实漏洞：运行失败，停止并报告用户；不得静默忽略，也不得在没有新的合同 revision 与用户批准时增加 exception。
+- 工具自身失败（镜像拉取失败、漏洞数据库或 OSV API 不可达、配置解析错误）使运行失败（fail closed），从不视为通过。
+- 唯一的 report-only 项是下一节的单个 advisory exception；没有其他 report-only 项。
+
+### 依赖漏洞 exception（R1，Q6-A 时生效）
+- 范围：仅 advisory `GHSA-vfj7-8cjw-p6xm`（别名 `CVE-2026-93687`）：`braces` ≤ 3.0.3 的递归 AST 遍历缺少深度限制，深度嵌套的 brace 模式可耗尽调用栈并以未捕获的 `RangeError` 终止 Node 进程（CWE-674，High，CVSS 8.7）。截至本 revision，3.0.3 是 `braces` 的最新发布版本，OSV 记录为 `last_affected: 3.0.3`，没有修复版本。
+- 准确依赖路径（两条，均由本阶段新增的开发工具引入；已提交的 `apps/web/package-lock.json` 中不存在 `braces`）：
+  1. `apps/web/package-lock.json`：`eslint-config-next@16.4.0` → `@next/eslint-plugin-next` → `fast-glob` → `micromatch` → `braces@3.0.3`；
+  2. `scripts/ci-tools/package-lock.json`：`@fission-ai/openspec@1.10.0` → `fast-glob` → `micromatch` → `braces@3.0.3`。
+  两个 lockfile 中 `node_modules/braces` 均为 `version 3.0.3`、`dev: true`。
+- 如实记录：`apps/web/Dockerfile` 是单阶段镜像，执行 `npm ci --ignore-scripts` 时安装全部依赖（含 devDependencies），因此 `braces@3.0.3` 存在于构建出的 Web 镜像的 `node_modules` 中；不得声称它不在镜像里。lockfile 中没有任何生产依赖链指向 `braces`（`next`、`react`、`pg` 均不依赖它），但本阶段不验证、也不声称运行时从不加载它。
+- 形式：`osv-scanner.toml` 中恰好一个 `[[IgnoredVulns]]` 条目，`id = "GHSA-vfj7-8cjw-p6xm"`，`ignoreUntil` 为 2026-11-20（批准后 30 天内），`reason` 写明上述事实。不使用通配、包级或严重度级忽略；不修改其他 vulnerability 的门禁。
+- 配置绑定（B1）：OSV-Scanner 的目录内 `osv-scanner.toml` 只作用于所在目录，不传播到子目录，因此根目录的文件不会自动作用于 `apps/web/` 与 `scripts/ci-tools/` 中的 lockfile。检查固定为 `osv-scanner scan source --config=/repo/osv-scanner.toml --recursive /repo`（`--config` 把该文件全局应用于本次扫描的全部 lockfile），不依赖工作目录或目录内配置的自动发现；任何嵌套目录中出现另一个 `osv-scanner.toml` 也使检查失败。
+- report-only：每次 `dependencies` 检查都打印该 exception（advisory、路径、到期日），使其在日志中可见；它不是静默忽略。
+- `scripts/ci.sh dependencies` 的守卫，任一条件不满足即失败：
+  1. `osv-scanner.toml` 只含这一个条目，且 id 正是该 advisory；
+  2. 每个出现 `node_modules/braces` 的 lockfile 中，它都是 `3.0.3` 且 `dev: true`；它出现在任何生产依赖位置、版本改变，或出现在这两个之外的 lockfile 中都会失败（迫使重新评估）；
+  3. 通过 OSV API 读取该 advisory：一旦任何受影响范围出现 `fixed` 事件（即存在修复版本），检查失败，要求移除 exception 并升级；读取失败亦失败；
+  4. `ignoreUntil` 到期后 osv-scanner 不再忽略该 advisory，检查失败；
+  5. 自检（持久，在 `scripts/ci.sh` 中每次运行）：再以不带 `--config` 的 JSON 输出扫描一次，结果必须恰好是该 advisory，出现在 `apps/web/package-lock.json` 与 `scripts/ci-tools/package-lock.json` 两个 lockfile 中、均为 `braces@3.0.3`；缺少任一 lockfile、出现其他 advisory 或其他包都失败。该扫描在 `set -e` 之外显式捕获退出码：只有 osv-scanner 的"发现漏洞"退出码 1 进入 JSON 解析，其他退出码（工具、网络或配置错误）与无法解析的 JSON 都失败。它证明 advisory 仍真实存在于两个嵌套 lockfile，且被放行只是因为显式的 `--config`；
+  6. 其余所有 finding 与工具错误照常失败。
+- 重新检查：每次依赖变更（任何 lockfile 变化都会在 CI 中触发该检查）以及任何生产部署之前都重新评估该 exception；届时的部署 stage 须把它列为前置检查项。一旦出现兼容的修复版本，就在新的 stage 中移除 exception 并升级依赖。
+- 不修改、不 patch 第三方源码或 `node_modules`；不使用 `overrides`/`resolutions` 强制指向不存在的修复版本；不降级或替换 `eslint-config-next`、`@fission-ai/openspec`（lint 与固定的 OpenSpec CLI 都是 task 1.5 的要求）。
+- Q6-B（保持阻塞）时：不创建 `osv-scanner.toml`，S1.5 停在 `dependencies` 检查，直到上游发布修复版本。
+
+### 工具链事实与前置条件（R3、R4）
+- 传递升级（Q7）：新增 `eslint-config-next` 引入的 `browserslist` 要求 `baseline-browser-mapping ^2.11.29` 与 `caniuse-lite ^1.0.30001816`，因此 npm 把两个既有传递依赖升级为 `baseline-browser-mapping` 2.11.28 → 2.11.30、`caniuse-lite` 1.0.30001815 → 1.0.30001817（`next` 本身要求 `^2.9.19`、`^1.0.30001579`，两个新版本都满足）。另有 `semver` 的 `optional` 标记变为 `devOptional`，版本不变。Q7 是对这一对升级的整体决定：两项最低版本都由同一个新增的 `browserslist` 依赖范围（`^2.11.29`、`^1.0.30001816`）各自强制，保留任一旧版本都不满足其范围，因此不能只接受其中一项。Q7-A 时 lockfile 只允许这两项升级、`semver` 标记变化与新增的包；Q7-B 时须先改为不引起升级的 lint 方案，这需要新的合同 revision。
+- ESLint 9 支持状态（R4）：npm 把 `eslint@9.39.5` 标记为 "no longer supported"。当前不能升级到 ESLint 10：`eslint-config-next@16.4.0` 依赖的 `eslint-plugin-react` 最新版本的 peer 范围是 `^3 … ^8 || ^9.7`，不含 10。后续升级触发条件（任一满足即开启一个独立的升级 stage）：与本仓库 Next 版本匹配的 `eslint-config-next` 及其全部插件声明支持 ESLint 10；或 ESLint 9 出现安全 advisory（依赖扫描会使运行失败）；或升级 Next 主版本。
+
+### Workflow 约束（D21）
+- 触发：`push`（所有分支）与 `pull_request`；不使用 `pull_request_target`、`workflow_run`、`schedule` 或 `workflow_dispatch`。
+- 顶层 `permissions: contents: read`，每个 job 也显式声明 `permissions: contents: read`；不提升任何权限。
+- `actions/checkout`、`actions/setup-node` 及其他任何 action 一律锁定到完整 commit SHA，并以注释标注版本；`actions/checkout` 使用 `persist-credentials: false`。
+- runner 固定为 `ubuntu-24.04`（不用 `ubuntu-latest`）；每个 job 设 `timeout-minutes`；`concurrency` 按 ref 分组并取消同一 ref 的过时运行。
+- 不使用任何仓库 secret、Environment 或凭据；所触及数据只有仓库内的合成数据和每次运行生成的合成口令。
+- 不包含 Playwright、E2E job 或任何 E2E 占位；不包含 13.2 的生产冒烟 workflow；不包含签名发布、attestation、release、SAST 或容器镜像扫描。
+- Node 版本：Q2-A 时由新文件 `.node-version`（`24.21.0`）统一提供，`setup-node` 读取它，`scripts/ci.sh` 在版本不一致时失败。
 
 ## Sub-steps
-1. 用户批准合同后，写 Implementation Checkpoint（`in_progress`，包含本合同全文和用户对 Q1、Q2 的选择），同时修正 scratchpad 中已过时的 S1.3 handoff 状态行。
-2. V0 只读预检：记录 Docker/Compose 快照，确认 `errlog-dev_pgdata` 状态，之后不做任何改动。
-3. V1 失败证据：先写测试；模块不存在时测试失败。
-4. 实现 seed 模块、CLI、npm scripts 和 `.dockerignore`。
-5. V2–V8 验证（见 Evidence）。
-6. README 增加简短的 "Dev seed" 小节：说明它是 local-dev fixture 数据，只限本地开发；写明运行命令（bind mount，连接串只按变量名传递）；写明"不是 allowlist、不是登录入口、不是生产路径"；写明 2.5/4.1 才使用它。
-7. 本地 gate 和 scope gate → 独立 reviewer → implementation handoff → 勾选 1.4 → `ready_for_safe_commit` → safe-commit。
+1. 用户批准后写 S1.5 Implementation Checkpoint（`in_progress`，含本合同全文），替换已过时的 S1.4 checkpoint/handoff 段落。（已在 revision 2 下完成；revision 6 获批后，checkpoint 改为记录 revision 6 的批准与 Q1–Q7 的选择（Q7 为对这一对升级的整体决定），并逐字替换为 revision 6 全文。）
+5a.（按 revision 6）Q6-A 时：写 `osv-scanner.toml` 的单个条目、`scripts/ci.sh dependencies` 的守卫与 report-only 打印；完成 R1 的失败证据；然后继续 `compose` 及其余步骤。
+2. 失败证据先行：在没有 `scripts/ci.sh` 时调用入口失败；每个检查在植入的合成缺陷下失败（见 Test requirements）。
+3. 加入 ESLint（Q1）与 `lint`/`typecheck` 脚本，更新 lockfile；`scripts/ci-tools/` 固定 OpenSpec。
+4. 编写 `scripts/ci.sh`、`.github/workflows/ci.yml`。
+5. 运行扫描工具得到 baseline，写入阻塞策略与（若需要）逐项忽略配置。
+6. 写 `docs/ci.md`、README 的 CI 小节、`docs/implementation-workflow.md` CI 节的一句指向说明、`ssdf-profile.md` 状态更新。
+7. 本地完整 gate：`scripts/ci.sh all` 通过；scope gate；`errlog-dev` 资源前后快照一致。
+8. 独立只读 reviewer → implementation handoff（Codex PASS）→ 勾选 1.5 → 复验 → checkpoint `ready_for_safe_commit`。
+9. safe-commit `check` → delivery commit-ready → 停止；之后按 delivery 流程分别取得 commit 与 push 批准（见 "交付"）。
 
 ## Exact paths allowed to change
-- `apps/web/db/seed/dev-seed.mjs`（新建）
-- `apps/web/db/seed/dev-seed.test.mjs`（新建）
-- `apps/web/.dockerignore`（只加一行 `db/seed`）
-- `apps/web/package.json`（只加两个 scripts，不改依赖）
-- `README.md`（只在 Local development stack 下加 Dev seed 小节）
-- `openspec/changes/math-error-correction-mvp/scratchpad.md`（只改 checkpoint 和过时的 S1.3 handoff 状态行）
-- `openspec/changes/math-error-correction-mvp/tasks.md`（只勾选 1.4）
+- `.github/workflows/ci.yml`（新）
+- `scripts/ci.sh`（新，可执行位 100755）
+- `scripts/ci-tools/package.json`（新）
+- `scripts/ci-tools/package-lock.json`（新）
+- `.node-version`（新，仅 Q2-A）
+- `apps/web/package.json`（仅新增 `lint`、`typecheck` 脚本与 Q1 所需 ESLint devDependencies，精确版本）
+- `apps/web/package-lock.json`（仅新增 ESLint 依赖所需的新包，以及 Q7-A 批准的两项传递升级与 `semver` 标记变化）
+- `apps/web/eslint.config.mjs`（新，仅 Q1-A）
+- `osv-scanner.toml`（新，仅 Q6-A；恰好一个 `GHSA-vfj7-8cjw-p6xm` 条目）
+- `docs/ci.md`（新）
+- `README.md`（新增 CI 小节）
+- `docs/implementation-workflow.md`（仅 CI 节一句指向 `docs/ci.md` 与 `scripts/ci.sh`）
+- `docs/security/ssdf-profile.md`（仅 PO.3、PO.5、PS.1、PW.8、RV.1 行与 "Current gaps"）
+- `openspec/changes/math-error-correction-mvp/scratchpad.md`（checkpoint 与 handoff 段落）
+- `openspec/changes/math-error-correction-mvp/tasks.md`（仅 1.5 复选框）
 
 ## Explicitly excluded
-- 任何 caller-context、dev 会话或 dev 身份 helper，包括 2.5 的检查本身；任何应用工作流或浏览器旅程证明（归 2.5 和 4.1）。
-- 任何 migration 或 schema 变更，包括 allowlist 表。
-- `compose.yaml`、`apps/web/Dockerfile`、`.gitignore`、`.env*`、`apps/web/package-lock.json`、任何依赖变更。
-- `apps/web/app/**` 及任何应用代码、路由、middleware、UI。
-- AuthService、OTP、allowlist 机制（Group 5）；4.1 的 E2E；1.5 的 CI。
-- 除 1.4 勾选以外的任何 OpenSpec artifact；治理文件（`CLAUDE.md`、workflow 文档、tools、`.safe-commit.json`）。
-- 对 Compose project `errlog-dev` 或 volume `errlog-dev_pgdata` 的任何操作（包括创建）。在开发库上运行 seed 由用户自己执行。
-- 删除或清理 seed 数据的命令。
-- seed 写入 `grading_session` 或任何其他表。
+- 任何产品代码与行为：`apps/web/app/**`、`apps/web/db/**`、`services/**`、`compose.yaml`、Dockerfile、`.dockerignore`（如 lint 需要修改产品代码才能通过，停止并报告）。
+- Playwright、E2E job/占位、`stage-reviewer` agent 定义（属于 4.1）；Python lint/type-check/pytest、contract tests、AI eval、SAST、容器镜像扫描、镜像 digest 固定（属于后续 Groups）。
+- 13.2 生产冒烟 workflow、GitHub Environment、任何 secret；签名、attestation、release pipeline。
+- GitHub 仓库设置（Actions 开关、分支保护、required checks）、gh 安装、调用 GitHub API 写操作；合并到 main、PR 创建。
+- 升级或修改既有依赖版本（Q7-A 作为一对整体批准的两项传递升级除外）；`overrides`/`resolutions`；修改或 patch 第三方源码；修改 `tools/**`、`test/**`、`.claude/**`、`CLAUDE.md`、`.safe-commit.json`、`docs/safe-commit*`。
+- 其他 OpenSpec 文本（proposal、design、specs、其余 tasks）；task 1.6 及以后。
+- `.agent-handoffs/` 中任何既有文件。
 
 ## Test requirements
-- 持久化 `node:test` 文件 `apps/web/db/seed/dev-seed.test.mjs`，从同一目录 import 模块。
-  - **需要数据库的用例**：
-    - 只读 `ERRLOG_SCHEMA_TEST_DATABASE_URL`，与 1.3 测试相同，未设置即失败；
-    - 每个用例在自己的事务中运行，结束时一律 `ROLLBACK`（成功和失败都是），不留任何行；测试不 `COMMIT`。
-  - **覆盖的内容**：
-    - (a) 首次调用：创建 1 个 user、1 个 identity、1 个 child，`current_child_id` 指向该 Child 且归属该 User，值与固定合成值一致，`display_name` 规范化且非空；
-    - (b) 再次调用：返回 `existing`，id 不变；三张表的全表行快照与第一次调用后一致（不重复、不修改）；
-    - 残缺状态（识别到 identity，但其 User 没有 `current_child_id`）：报错，不写入；
-    - (c) 归属约束探针：
-      - 在同一个将被回滚的事务里，插入一个绑定 seed 出的 user/child 的 `grading_session`，确认被 1.3 的复合外键接受；
-      - 作为对照，把同一 child 配另一个 user 的 `grading_session` 被拒绝；
-      - 该探针只存在于测试中，seed 模块和 CLI 不写 `grading_session`；
-      - 它只证明数据满足约束，不是 caller-context 证明；
-    - (d) CLI：未设置 `ERRLOG_DEV_SEED_DATABASE_URL` 时以非零码拒绝且不连接数据库；输出中不含连接串。
-- 1.3 的 `test:db` 回归通过。
-- 失败证据先于实现。
+- 本地完整 gate：`scripts/ci.sh all` 在最终树上通过（退出 0），并分别记录每个检查的结果。
+- 失败证据（均在会话临时目录或临时 Compose 项目中进行，不提交、不修改仓库文件，或在验证后逐字节恢复）：
+  - `workflow`（actionlint 层）：临时副本中 malformed YAML（缩进/映射错误、未闭合引号）、无效 Actions construct（未知顶层或 job 键、`runs-on` 缺失、无效 `permissions` 值、引用不存在的上下文或语法错误的 `${{ }}` 表达式、`needs` 指向不存在的 job）→ 各自由 actionlint 报告并失败；
+  - `workflow`（策略层）：临时副本中把一个 `uses:` 改为 tag、加入 `pull_request_target`、删除 `permissions`、加入 `continue-on-error` → 各自失败；
+  - `openspec`：临时副本中破坏一个 spec 场景 → 失败；
+  - `node-tests`：植入一个失败断言 → 失败；运行记录列出四个测试文件与总数；
+  - `web`：植入 lint 错误、类型错误 → 分别失败；
+  - `python`：植入语法错误 → 失败；
+  - `compose`：项目名 `errlog-dev` 或非 `errlog-ci-` 前缀被拒绝且未启动任何容器；一个失败的迁移/测试使检查失败且 trap 仍完成清理；
+  - `secrets`：在临时目录放入合成的、格式真实但无效的 token → 失败（该值不进入仓库、证据或 handoff，只记录"检测到 1 条、规则 ID"）；
+  - `dependencies`：对一个含已知漏洞版本的合成 lockfile（临时目录）→ 失败（证明 exception 不覆盖其他 advisory）；漏洞数据库不可达 → 失败而非通过；没有 `osv-scanner.toml` → 因该 advisory 失败；带 `osv-scanner.toml` 但去掉 `--config`（临时副本）→ 该 advisory 在两个嵌套 lockfile 中都被报告并失败，带精确 `--config` 时通过；嵌套目录放入另一个 `osv-scanner.toml` → 失败；临时副本中 `ignoreUntil` 已过期 → 失败；`osv-scanner.toml` 增加第二个条目或改为其他 id → 守卫失败；`braces` 版本改变或 `dev` 标记移除（临时 lockfile 副本）→ 守卫失败；守卫指向一个已有修复版本的 advisory（临时副本）→ 失败；OSV API 不可达 → 失败。
+- 清理证据：每次 `compose` 检查后，`errlog-ci-*` 的容器、网络、卷、本地镜像为零；`errlog-dev` 项目资源（容器/卷/网络）运行前后快照一致，`errlog-dev_pgdata` 未被创建或修改。
+- 合成口令不出现在任何输出、文件、证据、checkpoint 或 handoff 中（实施后扫描确认）。
+- 既有测试不修改、全部通过；`openspec validate --strict` valid；进度 5/89（勾选后）。
+- 远程 CI 无法在 commit 前运行（见 "Bootstrap"），因此本地 gate 是 commit 的前置条件；远程首次运行是 post-push 复验。
 
 ## Contract-test requirements
-无。5 个命名边界（AuthService、StorageService、PdfProcessingPort、AI Task Contract、Provider adapter）都不涉及：seed 直接写本地 PostgreSQL，不是 port。
+不适用：五个命名边界均未涉及（Contracts affected: none）。
 
 ## AI-eval requirements
-无，不涉及 AI。
+不适用：本阶段无 AI 能力。
 
 ## User-journey E2E requirements
-- Applicability：`not-applicable`。理由：没有新增或改变用户可见行为，只是一个开发者 CLI 和 fixture 数据，没有 UI、路由或页面；首个浏览器旅程归 4.1。
-- E2E worker：none（理由同上）。
-- 其余各项：不适用。
-- 下游约束：4.1 首次把该 fixture identity 用作旅程前置条件时，须按 D22 明确标注，不得称为登录 E2E。
+- Applicability：not-applicable——开发工具链与 CI 配置，不新增或改变任何用户可见行为、路由或 UI；且 task 1.5 与 D22 明确禁止在 1.5 加入 Playwright、E2E job 或占位。
+- E2E worker：none；其余 E2E 字段均为不适用。
 
 ## Security / privacy / trust-boundary impact
-- 该 seed 能在不经 OTP 的情况下创建 User/Identity，因此必须与生产隔离：
-  - 代码不在 web 镜像中（`.dockerignore`）；
-  - 需要专用环境变量；
-  - 没有路由，也不被 import。
-  - 本 stage 用镜像检查证明 seed 不在镜像中；13.4 之后在生产配置下复验。
-- 它不是 allowlist 条目，也不提供登录能力。`provider = 'dev-seed'` 不对应任何真实 OTP provider，所以 dev 记录带有明确标记，也不会与 5.4 的真实 email/phone identity 冲突。
-- 全部为合成数据。连接串只通过变量名传递，不写入文件、日志或证据。临时密码只存在于验证会话中，之后删除。
+- 新信任边界：GitHub Actions runner 与第三方 action/镜像。控制：最小 `contents: read`、action 锁定 SHA、actionlint 与扫描镜像锁定 digest、`persist-credentials: false`、无 `pull_request_target`、无 secret；fork PR 运行在只读 token 下，无 secret 可泄露。
+- CI 只触及仓库内合成数据和每次运行生成的合成口令；不使用真实凭据、真实儿童数据或照片。
+- 一次性 Compose 项目隔离：名称前缀守卫 + 仅清理自身项目，保护本地 `errlog-dev` 与其卷。
+- 扫描报告只记录规则 ID、路径与计数，不记录 secret 值；handoff 中不出现 URL、口令、环境转储或原始终端输出。
+- 依赖扫描需要访问公开漏洞数据库与 OSV API（网络）；不可达时失败关闭。
+- 已知残余风险（Q6-A，按改正后的威胁模型，B2）：`braces@3.0.3`（GHSA-vfj7-8cjw-p6xm）作为开发依赖存在于工作区与 Web 镜像中。`pull_request` 运行检查的是 PR 控制的仓库内容：ESLint 配置、OpenSpec 文件、被 lint 或校验的文件路径与内容都可能由 PR 构造，一律视为不可信；因此精心构造的 PR 数据可以到达使用 `braces` 的开发工具（`fast-glob`/`micromatch`），触发栈耗尽。影响边界：CI job 不持有 secret，`GITHUB_TOKEN` 只有 `contents: read`，checkout 不保存凭据，runner 是一次性的；主要影响是使该 CI 运行崩溃或失败（拒绝服务），不涉及凭据泄露或写权限。注意：PR 本身已能在这些 job 中执行任意代码（例如 ESLint 配置是 JavaScript），所以 `braces` 并不扩大该 job 的权限，但这不使 PR 内容变得可信。本地：维护者对不可信的 PR checkout 运行 `scripts/ci.sh` 同样会执行该 PR 的代码；`docs/ci.md` 须提醒只在可信 checkout 上运行。用户须按此威胁模型接受或拒绝 Q6-A。
 
 ## Evidence of completion
-所有验证只在临时 Compose project `errlog-v14-<UTC>` 中进行，不碰 `errlog-dev`。
-- **V0**：只读预检快照。
-- **V1**：失败证据（测试因模块缺失失败；CLI 不存在）。
-- **V2**：构建临时 web 镜像（`next build` 成功）；镜像中 `/app/db/seed` 不存在；生产镜像里运行 `npm run db:seed:dev` 失败。
-- **V3**：新库执行 `db:migrate`；`test:db` 11/11 通过（回归）。
-- **V4**：通过只读 bind mount 运行 `test:dev-seed`，全部通过；测试后 8 张表行数仍为 0（证明回滚，没有残留）。
-- **V5**：在临时库上用 CLI 真实运行两次：第一次 `created`，第二次 `existing`，id 相同；只读查询确认行数是 1/1/1，`current_child_id` 有效，`grading_session` 为 0 行；未设置连接串时被拒绝。
-- **V6**：正常启动 `web`，健康检查通过；web 环境中没有任何 DB 变量。
-- **V7**：secret 扫描：临时密码不出现在任何证据、脚本、仓库文件或 checkpoint 中。
-- **V8**：清理：
-  - 只按确切的临时 project 名和 label 删除其容器、网络、匿名/临时 volume 和临时镜像，不使用 prune；
-  - V5 写入的 fixture 数据随临时 volume 一起删除；
-  - 前后快照一致；`errlog-dev` 与 `errlog-dev_pgdata` 状态不变。
-- 本地 gate：
-  - `node --test test/`；
-  - `openspec validate --strict`；
-  - scope gate：diff 只落在允许路径内。
-- 独立 reviewer PASS → implementation handoff Codex PASS。
+- `scripts/ci.sh all` 本地通过的结构化摘要（每个检查：命令、退出码、耗时、关键计数）；失败证据与清理证据（见 Test requirements）。
+- `docs/ci.md` 记录：扫描 baseline 摘要与阻塞策略；Q6 exception 的 advisory、两条路径、`dev: true`、镜像包含 devDependencies 的事实、到期日、守卫与移除条件；Q7 两项传递升级；ESLint 9 状态与升级触发条件；新环境准备 Node 24.21.0 的方法；所有 action SHA 与镜像 digest（含 actionlint）及其版本记录在 workflow 注释与 `docs/ci.md`；actionlint 对最终 `ci.yml` 无报告。
+- scope gate：实际变更 ⊆ Allowed paths。
+- 独立 reviewer PASS；Codex implementation PASS；delivery commit-ready/push-ready 的 Codex PASS 与用户的两次独立批准。
+- 推送后首次远程 CI 运行的结果（见 Bootstrap）作为 post-push 复验记录到下一次 session 的 checkpoint/handoff，而非本阶段勾选的前提。
+
+## Bootstrap（尚无远程 CI）
+- 远程 CI 只在本阶段 commit 推送后首次运行，不能作为该 commit 的前置条件（D21、workflow "CI"）；本地 `scripts/ci.sh all` 即 pre-commit gate。
+- 推送后：用户按 Q5 的方式读取该 HEAD 的 CI 结论。记录的结果必须同时标明：准确的已推送 commit SHA（与 delivery push-result 记录的 commit 一致）、workflow 名称 `ci`、触发事件 `push`、以及该运行的最终 conclusion；只有该 SHA 的运行 conclusion 为 `success` 才记为 `passed`。其他 commit 的运行、重跑前的旧结论或未完成的运行都不能替代。`passed` 之前，任何依赖本阶段的 stage 不得开始；`failed`、`cancelled`、`pending`/`running`、`unknown` 都不视为通过。
+- 首次远程失败进入修复：新的 Stage Contract 或用户明确批准的定向修复，各有测试、review 与 safe-commit 周期；不 amend、不绕过、不 force-push。
+- 若仓库的 Actions 未启用，推送后不会产生运行：记录为 `unknown`，由用户决定启用或其他处理；不把"无运行"当作通过。
+
+## 交付（H3 后的默认门禁）
+- 本阶段是 H3 后第一个走 delivery channel 的 stage：check → commit-ready → 停止；Codex PASS + 用户批准 → commit → commit-result 与 push-ready → 停止；Codex PASS + 用户单独批准 → 单独运行 delivery `verify`（须 valid）→ 以 push-ready 的 endpoint hash 与 target ref 执行 guarded push → push-result → 停止。commit 与 push 不在同一命令批次。
 
 ## Rollback approach
-回退方式是 revert 本 stage 的 commit：新增文件加少量文本修改，没有 schema 或依赖变更。seed 写入的只是 dev 数据库里的合成数据；临时验证库在 V8 删除；用户自己的开发库如何处理由用户决定，本 stage 不提供删除命令。
+- commit 前：变更仅在工作树中；在用户授权下逐文件恢复（不使用 Git 变更命令绕过）。临时 Compose 项目已由 trap 清理；残留只按精确的 `errlog-ci-*` 名称清理。
+- commit/push 后：用新的 stage（revert 式的前向修复，经 safe-commit）删除或修正 workflow；不 force-push、不改写历史。如需立即停止远程运行，由用户在 GitHub 仓库设置中暂停 Actions。
 
 ## Open questions
-Q1、Q2 见下方，各附推荐项。它们仍待用户选择，推荐项不视为已批准。用户批准本合同时须明确给出 Q1、Q2 的选择；选择记录在 checkpoint 中。旧 Q3、Q4 已被 P1(15) 消除。
+见 handoff 的 openQuestions：Q1 ESLint、Q2 Node 版本、Q3 node-tests 范围（合同内只有 A 可实施）、Q4 扫描工具、Q5 远程 CI 结果读取（Q1–Q5 已于 revision 2 选 A，须随 revision 6 再次确认）；Q6 braces advisory 的处理；Q7 对两项传递升级整体批准或拒绝。
 ````
 
 Last updated: 2026-10-14. Checkpoint:

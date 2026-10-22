@@ -136,3 +136,19 @@ project, with `ERRLOG_SCHEMA_TEST_DATABASE_URL` and the same read-only mount:
 ```bash
 docker compose -p <name> run --rm --no-deps -v "$PWD/apps/web/db/seed:/app/db/seed:ro" -e ERRLOG_SCHEMA_TEST_DATABASE_URL web npm run test:dev-seed
 ```
+
+## CI
+
+`.github/workflows/ci.yml` is the only verification pipeline. It runs on `push` and
+`pull_request`, and every job runs one `scripts/ci.sh <check>`, the same entry point as
+the local stage-completion gate:
+
+```bash
+scripts/ci.sh all          # workflow, openspec, node-tests, python, web, secrets, dependencies, compose
+scripts/ci.sh <check>      # one check
+```
+
+It needs Node 24.21.0 (`.node-version`) and Docker; run it only on a trusted checkout.
+`compose` uses its own one-off `errlog-ci-*` project and never touches `errlog-dev`. See
+[docs/ci.md](docs/ci.md) for the checks, pinned tools, blocking policy and the current
+dependency exception.
