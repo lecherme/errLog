@@ -135,19 +135,25 @@ check_secrets() {
   return "$status"
 }
 
-# The only dependency-scan exception (S1.5, Q6-A). Every value here is checked against
-# osv-scanner.toml and the lockfiles; any other entry or finding fails. See docs/ci.md.
-OSV_EXCEPTION=GHSA-vfj7-8cjw-p6xm
-OSV_EXCEPTION_UNTIL=2026-11-20
-OSV_EXCEPTION_LOCKFILES="apps/web/package-lock.json scripts/ci-tools/package-lock.json"
+# The only dependency-scan exceptions (SR1). Every value here is checked against
+# osv-scanner.toml, the lockfiles and OSV; any other entry or finding fails. See docs/ci.md.
+# Each entry: advisory|package|allowed versions|lockfile|OSV fixed version|ignoreUntil
+OSV_EXCEPTIONS=(
+  "GHSA-3g3m-2fjr-6pw4|glob|13.0.6|apps/web/package-lock.json|14.0.2|2026-11-20"
+  "GHSA-g3hv-75wg-m249|minimatch|10.2.6,3.1.5|apps/web/package-lock.json|11.0.1|2026-11-20"
+)
 
-# Fails unless osv-scanner.toml holds exactly the one exception, no nested
-# osv-scanner.toml exists, and braces is 3.0.3 with dev: true wherever it appears.
+# Fails unless osv-scanner.toml holds exactly these exceptions in this order, no nested
+# osv-scanner.toml exists, and each package is an allowed version with dev: true, only in
+# its lockfile, wherever it appears.
 dependency_exception_guards() {
-  node --input-type=commonjs - "$OSV_EXCEPTION" "$OSV_EXCEPTION_UNTIL" $OSV_EXCEPTION_LOCKFILES <<'NODE'
+  node --input-type=commonjs - "${OSV_EXCEPTIONS[@]}" <<'NODE'
 const fs = require('node:fs');
 const path = require('node:path');
-const [id, until, ...allowed] = process.argv.slice(2);
+const entries = process.argv.slice(2).map((e) => {
+  const [id, pkg, versions, lockfile, fixed, until] = e.split('|');
+  return { id, pkg, versions: versions.split(','), lockfile, fixed, until };
+});
 const errors = [];
 const files = [];
 const walk = (dir) => {
@@ -160,16 +166,17 @@ const walk = (dir) => {
 walk('.');
 for (const f of files.filter((f) => path.basename(f) === 'osv-scanner.toml' && f !== 'osv-scanner.toml')) errors.push(`${f}: only the root osv-scanner.toml is allowed`);
 const lines = fs.readFileSync('osv-scanner.toml', 'utf8').split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
-const expected = ['[[IgnoredVulns]]', `id = "${id}"`, `ignoreUntil = ${until}`];
-if (lines.length !== 4 || expected.some((l, i) => lines[i] !== l) || !/^reason = "[^"\\]+"$/.test(lines[3])) {
-  errors.push(`osv-scanner.toml must hold exactly one entry: ${expected.join(' / ')} / reason = "..."`);
+const expected = entries.flatMap((e) => ['[[IgnoredVulns]]', `id = "${e.id}"`, `ignoreUntil = ${e.until}`, null]);
+if (lines.length !== expected.length || expected.some((l, i) => (l === null ? !/^reason = "[^"\\]+"$/.test(lines[i]) : lines[i] !== l))) {
+  errors.push(`osv-scanner.toml must hold exactly these entries, in order: ${entries.map((e) => `[[IgnoredVulns]] / id = "${e.id}" / ignoreUntil = ${e.until} / reason = "..."`).join('; ')}`);
 }
 for (const f of files.filter((f) => path.basename(f) === 'package-lock.json')) {
   const packages = JSON.parse(fs.readFileSync(f, 'utf8')).packages ?? {};
   for (const [key, pkg] of Object.entries(packages)) {
-    if (!/(^|\/)node_modules\/braces$/.test(key)) continue;
-    if (!allowed.includes(f)) errors.push(`${f}: braces is outside the exception's lockfiles`);
-    if (pkg.version !== '3.0.3' || pkg.dev !== true) errors.push(`${f}: ${key} must be 3.0.3 with dev: true (found ${pkg.version}, dev: ${pkg.dev})`);
+    const e = entries.find((e) => key === `node_modules/${e.pkg}` || key.endsWith(`/node_modules/${e.pkg}`));
+    if (!e) continue;
+    if (f !== e.lockfile) errors.push(`${f}: ${e.pkg} is outside the exception's lockfile`);
+    if (!e.versions.includes(pkg.version) || pkg.dev !== true) errors.push(`${f}: ${key} must be ${e.versions.join(' or ')} with dev: true (found ${pkg.version}, dev: ${pkg.dev})`);
   }
 }
 if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
@@ -177,42 +184,50 @@ console.log('exception guards: ok');
 NODE
 }
 
-# Fails once OSV records a fixed version for the advisory, or if OSV cannot be read.
-dependency_exception_unfixed() {
-  node --input-type=commonjs - "$1" <<'NODE'
-const id = process.argv[2];
-fetch(`https://api.osv.dev/v1/vulns/${id}`, { signal: AbortSignal.timeout(20000) })
-  .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-  .then((v) => {
-    if (v.id !== id || !v.affected?.length) throw new Error('unexpected OSV record');
-    const fixed = v.affected.flatMap((a) => (a.ranges ?? []).flatMap((r) => r.events ?? [])).filter((e) => e.fixed);
-    if (fixed.length) { console.error(`ci: ${id} now has a fixed version (${fixed.map((e) => e.fixed).join(', ')}): remove the exception and upgrade`); process.exit(1); }
-    console.log(`OSV ${id}: no fixed version`);
-  })
-  .catch((e) => { console.error(`ci: cannot read ${id} from OSV: ${e.message}`); process.exit(1); });
+# Fails unless each OSV record is readable, not withdrawn, and its only fixed version is
+# the recorded one (a compatible backport means: remove the exception and upgrade).
+dependency_exception_fixed_versions() {
+  node --input-type=commonjs - "${OSV_EXCEPTIONS[@]}" <<'NODE'
+const entries = process.argv.slice(2).map((e) => { const [id, pkg, , , fixed] = e.split('|'); return { id, pkg, fixed }; });
+Promise.all(entries.map(({ id, pkg, fixed }) =>
+  fetch(`https://api.osv.dev/v1/vulns/${id}`, { signal: AbortSignal.timeout(20000) })
+    .then((r) => { if (!r.ok) throw new Error(`cannot read ${id} from OSV: HTTP ${r.status}`); return r.json(); })
+    .then((v) => {
+      if (v.id !== id || !v.affected?.length) throw new Error(`${id}: unexpected OSV record`);
+      if (v.withdrawn) throw new Error(`${id} was withdrawn on ${v.withdrawn}: remove the exception`);
+      if (!v.affected.some((a) => a.package?.ecosystem === 'npm' && a.package?.name === pkg)) throw new Error(`${id}: OSV no longer lists npm ${pkg}`);
+      const found = v.affected.flatMap((a) => (a.ranges ?? []).flatMap((r) => r.events ?? [])).filter((e) => e.fixed).map((e) => e.fixed);
+      if (found.length !== 1 || found[0] !== fixed) throw new Error(`${id}: OSV fixed versions are now ${found.join(', ') || '(none)'} (expected only ${fixed}): re-evaluate, remove the exception and upgrade`);
+      console.log(`OSV ${id}: only fixed in ${pkg}@${fixed}`);
+    })))
+  .catch((e) => { console.error(`ci: ${e.message}`); process.exit(1); });
 NODE
 }
 
 check_dependencies() {
-  log "REPORT-ONLY exception until $OSV_EXCEPTION_UNTIL: $OSV_EXCEPTION (braces@3.0.3, dev) in $OSV_EXCEPTION_LOCKFILES; see docs/ci.md"
+  local entry id pkg versions lockfile fixed until
+  for entry in "${OSV_EXCEPTIONS[@]}"; do
+    IFS='|' read -r id pkg versions lockfile fixed until <<<"$entry"
+    log "REPORT-ONLY exception until $until: $id ($pkg@${versions//,/ and @}, dev) in $lockfile; see docs/ci.md"
+  done
   dependency_exception_guards
-  dependency_exception_unfixed "$OSV_EXCEPTION"
-  log "osv-scanner: every lockfile not ignored by Git, with the exception ($OSV_SCANNER_IMAGE)"
+  dependency_exception_fixed_versions
+  log "osv-scanner: every lockfile not ignored by Git, with the exceptions ($OSV_SCANNER_IMAGE)"
   docker run --rm -v "$ROOT:/repo:ro" "$OSV_SCANNER_IMAGE" scan source --config=/repo/osv-scanner.toml --recursive /repo
-  log "self-check: without --config the advisory is still reported in both lockfiles"
+  log "self-check: without --config exactly the excepted advisories are still reported"
   local rc=0 report
   report=$(docker run --rm -v "$ROOT:/repo:ro" "$OSV_SCANNER_IMAGE" scan source --format json --recursive /repo) || rc=$?
-  [[ $rc -eq 1 ]] || fail "self-check: osv-scanner exited $rc (expected 1, the advisory found)"
+  [[ $rc -eq 1 ]] || fail "self-check: osv-scanner exited $rc (expected 1, the advisories found)"
   node -e '
-const [id, ...lockfiles] = process.argv.slice(1);
+const entries = process.argv.slice(1).map((e) => { const [id, pkg, versions, lockfile] = e.split("|"); return { id, pkg, versions: versions.split(","), lockfile }; });
 let report;
 try { report = JSON.parse(require("node:fs").readFileSync(0, "utf8")); } catch { console.error("ci: self-check: osv-scanner JSON is unreadable"); process.exit(1); }
-const found = (report.results ?? []).flatMap((r) => (r.packages ?? []).flatMap((p) => (p.vulnerabilities ?? []).map((v) =>
-  `${r.source?.path?.replace(/^\/repo\//, "")} ${p.package?.name}@${p.package?.version} ${v.id}`))).sort();
-const want = lockfiles.map((f) => `${f} braces@3.0.3 ${id}`).sort();
+const found = [...new Set((report.results ?? []).flatMap((r) => (r.packages ?? []).flatMap((p) => (p.vulnerabilities ?? []).map((v) =>
+  `${r.source?.path?.replace(/^\/repo\//, "")} ${p.package?.name}@${p.package?.version} ${v.id}`))))].sort();
+const want = entries.flatMap((e) => e.versions.map((v) => `${e.lockfile} ${e.pkg}@${v} ${e.id}`)).sort();
 if (JSON.stringify(found) !== JSON.stringify(want)) { console.error(`ci: self-check: expected exactly\n  ${want.join("\n  ")}\nfound\n  ${found.join("\n  ") || "(none)"}`); process.exit(1); }
-console.log(`self-check: ${id} reported only for braces@3.0.3 in ${lockfiles.join(", ")}`);
-' "$OSV_EXCEPTION" $OSV_EXCEPTION_LOCKFILES <<<"$report"
+console.log(`self-check: reported exactly\n  ${want.join("\n  ")}`);
+' "${OSV_EXCEPTIONS[@]}" <<<"$report"
 }
 
 compose_snapshot() {

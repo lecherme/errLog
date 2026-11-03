@@ -1,9 +1,14 @@
 # OSV-Scanner configuration, applied to every lockfile only through the explicit
 # `--config=/repo/osv-scanner.toml` in `scripts/ci.sh dependencies` (S1.5, Q6-A).
-# Exactly one time-boxed, report-only exception; `scripts/ci.sh` fails on any other entry
-# and on any change to this one. See docs/ci.md ("Dependency exception").
+# Exactly two time-boxed, report-only exceptions (SR1); `scripts/ci.sh` fails on any other
+# entry and on any change to these. See docs/ci.md ("Dependency exceptions").
 
 [[IgnoredVulns]]
-id = "GHSA-vfj7-8cjw-p6xm"
+id = "GHSA-3g3m-2fjr-6pw4"
 ignoreUntil = 2026-11-20
-reason = "CVE-2026-93687: braces <=3.0.3 stack exhaustion (CWE-674); no fixed version; braces@3.0.3 is dev-only via eslint-config-next (apps/web) and @fission-ai/openspec (scripts/ci-tools); re-evaluate on dependency change and before any production deployment; remove once a fix exists"
+reason = "CVE-2026-118773: glob >=9.0.0 <=14.0.1 keeps traversing after AbortSignal cancellation; fixed only in 14.0.2 (new major); glob@13.0.6 is dev-only in apps/web via node-pg-migrate@9.0.0 (glob ~13.0.0); re-evaluate on dependency change and before any production deployment; remove once a compatible fix exists or the dependency is upgraded"
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-11-20
+reason = "CVE-2026-118764: minimatch <11.0.1 denial of service via globparts amplification; fixed only in 11.0.1 (new major); minimatch@10.2.6 and @3.1.5 are dev-only in apps/web via glob, typescript-eslint, eslint and its plugins; re-evaluate on dependency change and before any production deployment; remove once a compatible fix exists or the dependencies are upgraded"
